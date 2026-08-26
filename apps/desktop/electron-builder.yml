@@ -12,6 +12,12 @@ files:
   - dist/**
   - package.json
 asar: true
+extraResources:
+  # host 真实入口放 asar 外：主入口 host 分支以 ELECTRON_RUN_AS_NODE=1 的纯 Node
+  # 子进程加载它（asar 内文件在纯 Node 下不可直接 require/加载，见 main.ts 注释）。
+  - from: dist/host-main.js
+    to: host-main.js
+
 # better-sqlite3 等原生模块在步骤 3 引入时必须 asarUnpack（ADR-001 E-04）。
 win:
   target:

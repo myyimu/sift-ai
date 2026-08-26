@@ -1,6 +1,10 @@
-// E-03 spike 驱动（ADR-001 验证门）：模拟 Chrome 的 native messaging 行为——
-// spawn 打包后的 Sift.exe <allowed-origin> --parent-window=<id>，在 stdin/stdout
-// 管道上做长度前缀帧 ping/pong 往返，然后断开。
+// E-03 spike 驱动（ADR-001 验证门，替代架构版）：模拟 Chrome 的 native messaging
+// 行为，在 stdin/stdout 管道上做长度前缀帧 ping/pong 往返，然后断开。
+//
+// host 形态（E-03 实测后修正，证据见 ADR-002 草案）：Sift.exe 在
+// ELECTRON_RUN_AS_NODE=1 下加载 resources/host-main.js（纯 Node 入口）。
+// 生产部署中该变量由 SiftHost.cmd 包装器设置；驱动直接注入等价模拟
+// （cmd 在链路里仅设这一个变量，不改 stdio 字节流；cmd 启动性已单独验证）。
 //
 // 两个阶段各 >= ROUNDS 次（默认 100）：
 //   A. UI 未运行时的 host connect/disconnect + framed round-trip；
@@ -9,7 +13,7 @@
 //
 // 帧编解码在这里内联（独立复算），故意不 import @sift/host——spike 的意义是
 // 用与被测对象无关的实现交叉验证线上格式。
-// 用法：node tools/spike/run-e03-spike.mjs [--exe <Sift.exe>] [--rounds 100]
+// 用法：node tools/spike/run-e03-spike.mjs [--exe <Sift.exe>] [--host-entry <host-main.js>] [--rounds 100]
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -17,14 +21,37 @@ import { randomUUID } from 'node:crypto'
 
 const ORIGIN = 'chrome-extension://jhkdmlohebjffokfonhiijhhmocfcppo/'
 
+// 本脚本可能运行在 Electron 系 IDE 的集成终端里（ELECTRON_RUN_AS_NODE=1 会被
+// 子进程继承，使 Sift.exe 进入 node 模式、把 origin 当入口脚本加载）。
+// 真实 Chrome 启动 host 时不存在该变量——UI 轮剔除以还原真实环境；host 轮显式注入。
+const { ELECTRON_RUN_AS_NODE: _ignored, ...CLEAN_ENV } = process.env
+
 function parseArgs(argv) {
-  const out = { exe: resolve('apps/desktop/pack/win-unpacked/Sift.exe'), rounds: 100 }
+  const out = {
+    exe: resolve('apps/desktop/pack2/win-unpacked/Sift.exe'),
+    hostEntry: resolve('apps/desktop/pack2/win-unpacked/resources/host-main.js'),
+    rounds: 100,
+  }
   for (let i = 0; i < argv.length; i += 2) {
     if (argv[i] === '--exe') out.exe = resolve(argv[i + 1])
+    else if (argv[i] === '--host-entry') out.hostEntry = resolve(argv[i + 1])
     else if (argv[i] === '--rounds') out.rounds = Number(argv[i + 1])
     else { console.error(`unknown flag ${argv[i]}`); process.exit(2) }
   }
   return out
+}
+
+/** UI 进程 spawn：干净环境（无 RUN_AS_NODE）。 */
+function spawnUi(exe, args, options) {
+  return spawn(exe, args, { ...options, env: CLEAN_ENV })
+}
+
+/** host 进程 spawn：等价于 SiftHost.cmd（设 RUN_AS_NODE 后 Sift.exe + host 入口）。 */
+function spawnHost(exe, hostEntry, args, options) {
+  return spawn(exe, [hostEntry, ...args], {
+    ...options,
+    env: { ...CLEAN_ENV, ELECTRON_RUN_AS_NODE: '1' },
+  })
 }
 
 // —— 内联帧编解码（独立复算） ——
@@ -68,11 +95,11 @@ function stats(durations) {
 }
 
 /** 单次 host connect/disconnect + framed round-trip。 */
-function roundTrip(exe, id, timeoutMs) {
+function roundTrip(exe, hostEntry, id, timeoutMs) {
   return new Promise((res) => {
     const startedAt = Date.now()
     const nonce = randomUUID()
-    const child = spawn(exe, [ORIGIN, `--parent-window=${id}`], { stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawnHost(exe, hostEntry, [ORIGIN, `--parent-window=${id}`], { stdio: ['pipe', 'pipe', 'pipe'] })
     const reader = makeFrameReader()
     let settled = false
     const finish = (ok, error) => {
@@ -114,7 +141,7 @@ function roundTrip(exe, id, timeoutMs) {
 /** 启动 UI 实例并等到就绪标志（stderr 'UI mode ready'）。 */
 function startUi(exe) {
   return new Promise((res, rej) => {
-    const child = spawn(exe, [], { stdio: ['ignore', 'ignore', 'pipe'] })
+    const child = spawnUi(exe, [], { stdio: ['ignore', 'ignore', 'pipe'] })
     let ready = false
     const timer = setTimeout(() => (ready ? res(child) : rej(new Error('UI instance not ready in 12s'))), 12000)
     child.stderr.on('data', (c) => {
@@ -133,7 +160,7 @@ function startUi(exe) {
 function assertSecondUiExits(exe) {
   return new Promise((res) => {
     const startedAt = Date.now()
-    const child = spawn(exe, [], { stdio: ['ignore', 'ignore', 'pipe'] })
+    const child = spawnUi(exe, [], { stdio: ['ignore', 'ignore', 'pipe'] })
     const timer = setTimeout(() => { child.kill(); res({ ok: false, error: 'second UI did not exit in 10s' }) }, 10000)
     child.on('exit', (code) => {
       clearTimeout(timer)
@@ -143,14 +170,14 @@ function assertSecondUiExits(exe) {
   })
 }
 
-async function runPhase(label, exe, rounds) {
+async function runPhase(label, exe, hostEntry, rounds) {
   console.log(`\n=== 阶段 ${label}：${rounds} 次 connect/disconnect + framed round-trip ===`)
   const failures = []
   const durations = []
   for (let i = 1; i <= rounds; i++) {
     // 首轮给 Defender 冷扫描留余量。
     const timeoutMs = i <= 2 ? 20000 : 10000
-    const r = await roundTrip(exe, i, timeoutMs)
+    const r = await roundTrip(exe, hostEntry, i, timeoutMs)
     durations.push(r.ms)
     if (!r.ok) {
       failures.push({ i, error: r.error })
@@ -174,10 +201,18 @@ async function main() {
     console.error(`exe 不存在: ${args.exe}（先 pnpm --filter @sift/desktop package:dir）`)
     process.exit(2)
   }
-  console.log(`E-03 spike\nexe:    ${args.exe}\norigin: ${ORIGIN}\nrounds: ${args.rounds}/phase`)
+  if (!existsSync(args.hostEntry)) {
+    console.error(`host 入口不存在: ${args.hostEntry}`)
+    process.exit(2)
+  }
+  console.log(`E-03 spike（替代架构：RUN_AS_NODE host）
+exe:        ${args.exe}
+host-entry: ${args.hostEntry}
+origin:     ${ORIGIN}
+rounds:     ${args.rounds}/phase`)
 
   // 阶段 A：UI 未运行。
-  const phaseA = await runPhase('A（UI 未运行）', args.exe, args.rounds)
+  const phaseA = await runPhase('A（UI 未运行）', args.exe, args.hostEntry, args.rounds)
 
   // 阶段 B：UI 运行中。
   let uiChild
@@ -191,7 +226,7 @@ async function main() {
   const lockCheck = await assertSecondUiExits(args.exe)
   console.log(`  单实例锁断言: ${lockCheck.ok ? `通过（第二实例 ${lockCheck.ms}ms 退出 code=${lockCheck.code}）` : `失败：${lockCheck.error}`}`)
 
-  const phaseB = await runPhase('B（UI 运行中）', args.exe, args.rounds)
+  const phaseB = await runPhase('B（UI 运行中）', args.exe, args.hostEntry, args.rounds)
 
   uiChild.kill()
 
@@ -199,7 +234,7 @@ async function main() {
     phaseA.okCount === phaseA.total &&
     phaseB.okCount === phaseB.total &&
     lockCheck.ok
-  console.log(`\n=== E-03 spike 结论: ${pass ? 'PASS ✅（主 exe 双模式在两种 UI 状态下均通过全部往返）' : 'FAIL ❌'} ===`)
+  console.log(`\n=== E-03 spike 结论: ${pass ? 'PASS ✅（替代架构：RUN_AS_NODE host 在两种 UI 状态下均通过全部往返）' : 'FAIL ❌'} ===`)
   if (!pass) {
     console.log('失败明细：')
     for (const f of [...phaseA.failures, ...phaseB.failures]) console.log(`  round ${f.i}: ${f.error}`)

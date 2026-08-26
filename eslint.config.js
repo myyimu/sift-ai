@@ -6,7 +6,7 @@ import tseslint from 'typescript-eslint'
 import { siftReadonlyRules } from '@sift/eslint-config-readonly'
 
 export default tseslint.config(
-  { ignores: ['**/node_modules/**', '**/dist/**', '**/out/**', '**/*.mjs'] },
+  { ignores: ['**/node_modules/**', '**/dist/**', '**/out/**', '**/*.mjs', 'apps/desktop/pack*/**', 'apps/desktop/win-unpacked/**'] },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {

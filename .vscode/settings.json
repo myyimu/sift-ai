@@ -1,0 +1,20 @@
+{
+  // 构建产物体积大且含二进制，排除出监视/搜索/资源管理器，避免 IDE 持有句柄
+  // （Electron 重新打包时 EnsureEmptyDir 会因句柄占用失败）。
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/dist/**": true,
+    "apps/desktop/pack*/**": true,
+    "apps/desktop/win-unpacked/**": true
+  },
+  "search.exclude": {
+    "**/node_modules/**": true,
+    "**/dist/**": true,
+    "apps/desktop/pack*/**": true,
+    "apps/desktop/win-unpacked/**": true
+  },
+  "files.exclude": {
+    "apps/desktop/pack*/**": true,
+    "apps/desktop/win-unpacked/**": true
+  }
+}
