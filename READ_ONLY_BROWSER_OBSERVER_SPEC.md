@@ -845,7 +845,7 @@ P0.5 先验证用户主动生成的当前范围主题云。本阶段再验证更
 
 ## 15. 实施时的开放问题
 
-当前 P0 Demo 的产品边界、默认预算、SQLite + blob Store、手动 Native Host 注册和远程确认已经由 `P0_DEMO_SCOPE.md` 冻结。桌面壳（Electron/TypeScript monorepo）、Native Host 打包（单 exe 双模式）、ModelAdapter 传输与 Token 估算、敏感词表 v1 以及静态扫描/canary 工具已由 `ADR-001_DEMO_ENGINEERING.md` 决定。以下实现型选择在开发过程中完成，不构成扩大产品范围：
+当前 P0 Demo 的产品边界、默认预算、SQLite + blob Store、手动 Native Host 注册和远程确认已经由 `P0_DEMO_SCOPE.md` 冻结。桌面壳（Electron/TypeScript monorepo）、Native Host 打包（单 exe 双模式，带限时 spike 验证门，失败则另开替代 ADR）、ModelAdapter 传输与 Token 估算、敏感词表 v1 以及静态扫描/canary 工具已由 `ADR-001_DEMO_ENGINEERING.md` 决定。以下实现型选择在开发过程中完成，不构成扩大产品范围：
 
 - 同源新 document 重注入、BFCache 与复杂 SPA 的具体状态机实现；
 - `readable-v1`、200ms/2000ms、5 MiB/50k nodes/128 depth、256 KiB chunks 和 backpressure 默认值的首轮真实页面基准。
