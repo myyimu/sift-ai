@@ -1,9 +1,18 @@
 # ADR-002：Native Host 进程模型替代方案（E-03 spike 未通过的后续决定）
 
-- **状态：草案（待批准）** —— 按 ADR-001 E-03 的预定出口（"未通过则另开替代 ADR，
-  `packages/host` 契约不变"）起草。批准前不改动任何冻结文档。
+- **状态：已批准（2026-08-26，用户批准）**
+- **批准范围**：
+  1. host 形态：`SiftHost.cmd → ELECTRON_RUN_AS_NODE=1 → Sift.exe resources\host-main.js`；
+  2. `packages/host` 契约保持不变；
+  3. `SiftHost.cmd` 纳入正式打包（extraFiles）并执行真实 Chrome E2E；
+  4. 允许在 ADR-001 中添加"由 ADR-002 取代"批注（已添加，3 处）。
+- **批准限制（持续生效）**：
+  1. **暂不授权写入注册表**——执行任何注册表脚本前必须再次征得用户确认；
+  2. **真实 Chrome E2E 通过前，不宣称 Native Messaging 全链路完成**；
+  3. `SiftHost.cmd` 保持纯 ASCII、路径全引号；host 侧保持失败关闭；不突破
+     P0 权限边界（manifest 仅 activeTab/scripting/nativeMessaging/storage）。
 - **日期：2026-08-26**
-- **关联：ADR-001_DEMO_ENGINEERING.md（E-03）、P0_DEMO_SCOPE.md（§2.1 单机 Demo）**
+- **关联：ADR-001_DEMO_ENGINEERING.md（E-03，已批注取代）、P0_DEMO_SCOPE.md（§2.1 单机 Demo）**
 
 ## 1. 背景与结论
 
@@ -70,6 +79,19 @@ UI（用户双击/桌面）
 | manifest 直接指向 node.exe | Demo 机器不保证装 Node；多一份运行时依赖 |
 | manifest 指向 Sift.exe + 期待 Chrome 侧容错 | Chrome 帧解析严格，2 字节垃圾即断连；不可依赖 |
 
+### 与 ADR-001"被否决的备选"的关系澄清
+
+ADR-001 §2 曾否决"`.bat` wrapper 启动 node 脚本"，否决点有二：依赖机器上的
+node、以及 Chrome 对 bat 的引号/编码行为不可靠。本方案不冲突：
+
+1. `SiftHost.cmd` 启动的是**打包产物 Sift.exe**（自带完整运行时，机器无需装
+   Node），与"启动 node 脚本"有本质区别；
+2. 引号/编码行为已在本机实测定证（E-8：`"%~dp0..."` 全引号 + 纯 ASCII 下
+   字节流零污染），消解了原否决依据的不确定性；纯 ASCII 作为硬约束写入 §3；
+3. E-03 的失败出口要求"独立轻量 host **可执行文件**"的本意是避免**第二条构建
+   链**；本方案零新增构建链（同一 electron-builder 产物 + 一个静态 .cmd 文件），
+   精神实质一致。
+
 ## 5. 实施影响
 
 已随 spike 落地（不改变任何冻结契约）：
@@ -78,19 +100,23 @@ UI（用户双击/桌面）
 - `apps/desktop/src/main.ts`：host 形态参数失败关闭 + 注释记录全部实测证据；
 - `apps/desktop/build.mjs`：双入口打包（dist/main.js + dist/host-main.js）；
 - `apps/desktop/electron-builder.yml`：host-main.js 经 extraResources 发布在
-  asar 外（纯 Node 直接加载，不依赖 asar 支持）；
+  asar 外；**SiftHost.cmd 经 extraFiles 发布在安装根目录（2026-08-26 已落地，
+  源文件 `apps/desktop/build/SiftHost.cmd`，纯 ASCII + CRLF + 全引号，产物
+  字节一致性已验证）**；
 - `tools/spike/run-e03-spike.mjs`：驱动注入等价环境（cmd 链路单独验证），
-  完成门定义不变。
+  完成门定义不变；正式打包产物复验 200/200 全过
+  （A 相 100/100 p50=84ms；B 相 100/100 p50=102ms）。
 
-批准后待办：
+批准后待办（2026-08-26 更新）：
 
-- [ ] SiftHost.cmd 纳入 electron-builder extraFiles（当前为 spike 手动放置）；
-- [ ] 注册表 manifest（`com.dj.sift.demo` → SiftHost.cmd 绝对路径）写入脚本
-  （需用户明确批准后执行——写注册表属系统级改动）；
-- [ ] 真实 Chrome E2E：装扩展 → connect → 发帧 → 断开 → UI 开/关两态复验
-  （纳入步骤 2 之前的门）；
-- [ ] ADR-001 E-03 章节加"已由 ADR-002 取代"批注（冻结文档，需用户执行或
-  明确授权）。
+- [x] SiftHost.cmd 纳入 electron-builder extraFiles；
+- [x] ADR-001 E-03 章节批注（3 处：决策总表、§2 标题下、spike 段落后）；
+- [ ] 注册表注册/查询/回滚脚本已就绪（`tools/scripts/register-sift-native-host.mjs`，
+      仅 HKCU、Chrome 键、可 `status`/`remove`）——**执行 register 前需用户再次确认
+      （批准限制 1），尚未执行**；
+- [ ] 真实 Chrome E2E（`tools/spike/run-chrome-e2e.mjs`，临时测试扩展与产品扩展
+      同 key → 同 ID；单向报告协议；UI 开/关两态）——harness 已就绪，
+      **待注册表注册后执行；通过前不宣称 Native Messaging 全链路完成（批准限制 2）**。
 
 ## 6. 风险与缓解
 

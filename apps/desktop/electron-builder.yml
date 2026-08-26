@@ -3,20 +3,25 @@
 appId: com.dj.sift.demo
 productName: Sift
 directories:
-  # 独立输出目录（曾遇 Defender 实时扫描锁住旧 app.asar 导致重打包失败，
-  # 换新目录规避对旧产物的删除依赖）。
-  output: pack
-  # buildResources 目录暂无内容（无图标等），显式指向空目录避免 electron-builder 告警
+  # 输出目录（ADR-002）：曾遇 IDE 文件监视器/Defender 锁住旧 pack/ 产物导致
+  # EnsureEmptyDir 失败，标准定为 pack2（.gitignore/.vscode/eslint 均已按 pack* 排除）。
+  output: pack2
+  # buildResources：SiftHost.cmd 等 manifest/包装器源文件所在（tracked）
   buildResources: build
 files:
   - dist/**
   - package.json
 asar: true
 extraResources:
-  # host 真实入口放 asar 外：主入口 host 分支以 ELECTRON_RUN_AS_NODE=1 的纯 Node
-  # 子进程加载它（asar 内文件在纯 Node 下不可直接 require/加载，见 main.ts 注释）。
+  # host 真实入口放 asar 外：SiftHost.cmd 以 ELECTRON_RUN_AS_NODE=1 的纯 Node
+  # 形态加载它（asar 内文件在纯 Node 下不可直接加载，见 main.ts/ADR-002）。
   - from: dist/host-main.js
     to: host-main.js
+extraFiles:
+  # Native Messaging 注册入口（ADR-002）：Chrome manifest 的 path 指向这里。
+  # 纯 ASCII + 全引号约束见文件头注释。
+  - from: build/SiftHost.cmd
+    to: SiftHost.cmd
 
 # better-sqlite3 等原生模块在步骤 3 引入时必须 asarUnpack（ADR-001 E-04）。
 win:

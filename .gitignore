@@ -11,3 +11,4 @@ apps/desktop/pack*/
 apps/desktop/*.exe
 coverage/
 .vitest/
+tools/.cache/

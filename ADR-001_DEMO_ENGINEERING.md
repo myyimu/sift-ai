@@ -8,7 +8,7 @@
 |---|---|---|
 | E-01 | TypeScript 单语 monorepo（pnpm workspace），Extension 与桌面端共享契约包 | 接受 |
 | E-02 | 桌面壳采用 Electron；Demo 阶段 Windows x64 单目标 | 接受 |
-| E-03 | Native Host 先验证复用主 Electron exe 的单 exe 双模式；使用 Chrome 启动参数 + stdio 管道联合识别，失败则进入独立 host 可执行文件的替代 ADR；host 逻辑独立成包、无状态、幂等 | 接受（带验证门） |
+| E-03 | Native Host 先验证复用主 Electron exe 的单 exe 双模式；使用 Chrome 启动参数 + stdio 管道联合识别，失败则进入独立 host 可执行文件的替代 ADR；host 逻辑独立成包、无状态、幂等 | 接受（带验证门）→ **验证门未通过，已由 [ADR-002](ADR-002_NATIVE_HOST_REPLACEMENT_DRAFT.md) 取代（2026-08-26 批注，用户授权）** |
 | E-04 | 存储：better-sqlite3 + WAL + 应用数据目录下的 blob 目录；SQLite 事务维护索引与引用，blob 走同卷暂存 + 原子 rename，并用启动 reconciliation 收敛文件系统与数据库的不原子窗口 | 接受 |
 | E-05 | demo-projector-v1 的 DOM 解析用 linkedom，离线、禁网络；夹具证明不足时回退 jsdom | 接受 |
 | E-06 | ModelAdapter 按 OpenAI-compatible Chat Completions 设计；baseUrl/apiKey/model 全部来自环境变量；优先 `response_format=json_schema`，降级 `json_object`；本地 zod 二次校验失败关闭 | 接受 |
@@ -58,6 +58,8 @@ e:\sift-ai
 构建：Extension 用 esbuild 产出固定 bundle（content script 零运行时依赖）；桌面端开发期 `electron .`，产出期 `electron-builder --dir` 得到未安装的 `win-unpacked/Sift.exe`。
 
 ## 2. E-03：Native Host = 主 exe 双模式
+
+> **[2026-08-26 批注]** 本节双模式方案已被 [ADR-002](ADR-002_NATIVE_HOST_REPLACEMENT_DRAFT.md) 取代：spike 实测打包 exe 的 GUI 引导在任何用户代码之前向 stdout 无条件写入 2 字节垃圾（`0d 0a`），且主进程 Node 层 stdio 与 fd 重定向均不可用——按本节预设的失败出口，host 改为 `SiftHost.cmd → ELECTRON_RUN_AS_NODE=1 → Sift.exe resources\host-main.js`（同一发布物、同一二进制，`packages/host` 契约不变）。三条件联合判定、失败关闭、无状态幂等、canary 覆盖等约束全部由 ADR-002 继承。以下原文保留作为决策历史。
 
 ### 约束回顾
 

@@ -43,6 +43,28 @@ node tools/spike/manual-roundtrip.mjs    # 单次真实 .cmd 链路诊断
 
 判定：两阶段全部轮次 ok 且单实例锁断言通过 -> PASS；任一失败 -> FAIL。
 
+## 真实 Chrome E2E（ADR-002，注册表确认后执行）
+
+`run-chrome-e2e.mjs`：临时测试扩展（与产品扩展同 manifest key -> 同 Extension ID，
+不触碰产品代码/权限）-> `chrome.runtime.connectNative` -> SiftHost.cmd -> host-main.js，
+UI 开/关两态各 N 轮。协议为**单向**：扩展只 POST 结果到 127.0.0.1 报告端点 +
+轮询只读的 `/phase-b` 标志（无指令通道）。
+
+```bash
+node tools/spike/run-chrome-e2e.mjs --cft --plumbing   # 管道自检（无需注册表，预期 connect 失败并回报）
+node tools/spike/run-chrome-e2e.mjs --cft               # 正式（前置：register-sift-native-host.mjs register）
+```
+
+- `--cft`：自动下载 Chrome for Testing（官方真实 Chrome 构建，支持 `--load-extension`；
+  npmmirror 镜像，缓存于 `tools/.cache/cft`）。本机品牌 Chrome 151 已实测忽略
+  `--load-extension`；不用 `--cft` 时 harness 会给出一次性手动 Load unpacked 指引。
+- `--plumbing`：验证 Chrome 启动/扩展加载/SW/报告通道/native 调用全链触达
+  （注册表未注册 -> 每轮失败并回报错误即通过条件）。
+- 注册表：`tools/scripts/register-sift-native-host.mjs status|register|remove`
+  （仅 HKCU + Chrome 键；**register 执行前需用户确认**）。
+
+## 已知环境坑（Windows）
+
 诊断工具（保留用于复现 ADR-002 证据）：
 - `crlf-probe.mjs`：GUI 模式 vs RUN_AS_NODE 模式的 stdout 字节流对比；
 - `crlf-suppress-probe.mjs`：CRLF 到达时机（t≈30ms，早于 main.js）与抑制变体
