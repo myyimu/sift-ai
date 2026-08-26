@@ -1,0 +1,20 @@
+{
+  "name": "@sift/eslint-config-readonly",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "scripts": {
+    "test": "vitest run --root ."
+  },
+  "peerDependencies": {
+    "eslint": ">=9"
+  },
+  "devDependencies": {
+    "eslint": "^9.18.0",
+    "vitest": "^3.0.0"
+  }
+}

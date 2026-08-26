@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Sift AI Demo Observer",
+  "short_name": "Sift",
+  "version": "0.1.0",
+  "description": "Sift AI P0 demo — read-only browser observer. Fixed demo key; Native Host only allows this extension ID.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjKrQVvyaK8t77Yx5zBc/VzEqrUBvTPRheiJhCrd+4F9Xart/datdsCUB6szmM/NrDgaQeZaQsHCg0ljlxmXVHRC06IaP3BmlT7Omh0fyMu29xLdDgIHY0TNKq+TUXre0J1jHdlga8lmVYxBFQ8TWF+A/aOouQkjl/TpRLyimxCDELzeLSPt/wNf6E+3NY7gNilABrdhpVyReNsQ96LDWHJvVxOCqzsXQr92Aq0n7fezjglmhj2lpT71Zp4D6dm8oaeh/amvTDBeEmNt8bSW6yM5O4lSm/nbgnXxApI4zvKY2LObCYMhkyk9CS7wy8qDoGVbSbi81TOn0AMCTS5s72QIDAQAB",
+  "minimum_chrome_version": "109",
+  "action": {
+    "default_title": "Sift：授权观察当前页面"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "nativeMessaging",
+    "storage"
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  }
+}

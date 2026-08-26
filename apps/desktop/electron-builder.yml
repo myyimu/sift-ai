@@ -1,0 +1,24 @@
+# electron-builder 配置（ADR-001 E-03 spike：--dir 产出 win-unpacked/Sift.exe）。
+# 正式分发（nsis/自动升级）不属于 Demo（P0_DEMO_SCOPE §2.1）。
+appId: com.dj.sift.demo
+productName: Sift
+directories:
+  # 独立输出目录（曾遇 Defender 实时扫描锁住旧 app.asar 导致重打包失败，
+  # 换新目录规避对旧产物的删除依赖）。
+  output: pack
+  # buildResources 目录暂无内容（无图标等），显式指向空目录避免 electron-builder 告警
+  buildResources: build
+files:
+  - dist/**
+  - package.json
+asar: true
+# better-sqlite3 等原生模块在步骤 3 引入时必须 asarUnpack（ADR-001 E-04）。
+win:
+  target:
+    - dir
+  # Demo 不签名、不发布；跳过 rcedit/签名工具链（避免拉取 winCodeSign——
+  # 其解压包含 darwin symlink，在无符号链接权限的 Windows 上会失败）。
+  signAndEditExecutable: false
+electronDownload:
+  # 与 .npmrc 的 electron_mirror 保持一致（双保险：命令行环境缺 npm config 时兜底）
+  mirror: https://npmmirror.com/mirrors/electron/

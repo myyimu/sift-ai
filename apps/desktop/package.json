@@ -1,0 +1,23 @@
+{
+  "name": "@sift/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node build.mjs && tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "package:dir": "electron-builder --dir",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "@sift/host": "workspace:*",
+    "@sift/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^33.3.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.25.0"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "sift-ai",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Sift AI — read-only browser observer (P0 demo). Root scripts only; implementation lives in apps/ and packages/.",
+  "scripts": {
+    "lint": "eslint .",
+    "lint:ast": "eslint apps/extension/src",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "build": "pnpm --filter @sift/extension build",
+    "build:desktop": "pnpm --filter @sift/desktop build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@sift/eslint-config-readonly": "workspace:*",
+    "eslint": "^9.18.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.20.0",
+    "vitest": "^3.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "electron-winstaller",
+      "esbuild"
+    ]
+  },
+  "packageManager": "pnpm@10.14.0"
+}

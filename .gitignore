@@ -1,0 +1,12 @@
+node_modules/
+dist/
+out/
+*.tsbuildinfo
+.env
+.env.*
+tools/keys/
+apps/desktop/win-unpacked/
+apps/desktop/pack/
+apps/desktop/*.exe
+coverage/
+.vitest/

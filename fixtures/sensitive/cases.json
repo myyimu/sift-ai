@@ -1,0 +1,123 @@
+{
+  "$comment": "sensitive-v1 判定夹具（ADR-001 E-08 / P0_DEMO_SCOPE §3）。所有密钥样例均为公开教学样例或合成串，绝非真实凭据。path 判定语义：先整体百分号解码（畸形编码解码失败一律 deny，失败关闭），再按 / 切段，与版本化 deny 词干精确匹配且大小写不敏感（防 %2F 与大小写绕过）。queryParam 判定为参数名精确匹配。content 判定按 E-08 密钥模式，expected=redacted 时 mustContain 必须出现在输出中，mustNotContain 若给出则不得出现。",
+  "pathCases": [
+    { "path": "/articles/how-to-learn", "expected": "allow" },
+    { "path": "/p/12345", "expected": "allow" },
+    { "path": "/docs/login-history", "expected": "allow", "note": "切段精确匹配：login-history 不等于词干 login，不得误杀" },
+    { "path": "/login", "expected": "deny" },
+    { "path": "/signin", "expected": "deny" },
+    { "path": "/sign-in", "expected": "deny" },
+    { "path": "/sign_in", "expected": "deny" },
+    { "path": "/auth", "expected": "deny" },
+    { "path": "/oauth", "expected": "deny" },
+    { "path": "/account", "expected": "deny" },
+    { "path": "/billing", "expected": "deny" },
+    { "path": "/payment", "expected": "deny" },
+    { "path": "/checkout", "expected": "deny" },
+    { "path": "/user/login", "expected": "deny" },
+    { "path": "/%2F%2Flogin", "expected": "deny", "note": "整体解码得 //login 再切段 -> 命中 login；先切后解的错误实现会漏判" },
+    { "path": "/docs%2Flogin", "expected": "deny", "note": "%2F 就是路径分隔：解码得 /docs/login -> 命中" },
+    { "path": "/articles/oauth%3Fclient_id", "expected": "allow", "note": "query 编码出现在 path 段，切段词干为 oauth%3Fclient_id，不等于 oauth" },
+    { "path": "/Login", "expected": "deny", "note": "path 匹配大小写不敏感（ADR-001 §6.1）：Login 等价词干 login" },
+    { "path": "/LOGIN", "expected": "deny", "note": "全大写变体同样命中" },
+    { "path": "/%4Cogin", "expected": "deny", "note": "L 的百分号编码 %4C：先整体解码得 /Login，再大小写不敏感匹配" },
+    { "path": "/%6Cogin", "expected": "deny", "note": "小写 l 的百分号编码 %6C：解码得 /login" },
+    { "path": "/log%in", "expected": "deny", "note": "畸形百分号序列：decode 抛错必须失败关闭（deny），不得放行" },
+    { "path": "/log%2", "expected": "deny", "note": "截断的百分号编码同样失败关闭" }
+  ],
+  "queryParamCases": [
+    { "param": "q", "expected": "keep" },
+    { "param": "page", "expected": "keep" },
+    { "param": "id", "expected": "keep" },
+    { "param": "lang", "expected": "keep" },
+    { "param": "sort", "expected": "keep" },
+    { "param": "token", "expected": "redact" },
+    { "param": "access_token", "expected": "redact" },
+    { "param": "refresh_token", "expected": "redact" },
+    { "param": "id_token", "expected": "redact" },
+    { "param": "code", "expected": "redact" },
+    { "param": "key", "expected": "redact" },
+    { "param": "api_key", "expected": "redact" },
+    { "param": "apikey", "expected": "redact" },
+    { "param": "secret", "expected": "redact" },
+    { "param": "client_secret", "expected": "redact" },
+    { "param": "signature", "expected": "redact" },
+    { "param": "sig", "expected": "redact" },
+    { "param": "session", "expected": "redact" },
+    { "param": "sessionid", "expected": "redact" },
+    { "param": "session_id", "expected": "redact" },
+    { "param": "sid", "expected": "redact" },
+    { "param": "auth", "expected": "redact" },
+    { "param": "authorization", "expected": "redact" },
+    { "param": "password", "expected": "redact" },
+    { "param": "passwd", "expected": "redact" }
+  ],
+  "contentCases": [
+    {
+      "pattern": "aws-access-key",
+      "text": "config uses AKIAIOSFODNN7EXAMPLE as the key",
+      "expected": "redacted",
+      "mustContain": "[REDACTED:secret]",
+      "mustNotContain": "AKIAIOSFODNN7EXAMPLE"
+    },
+    {
+      "pattern": "openai-sk",
+      "text": "export KEY=sk-abcdef1234567890abcdef",
+      "expected": "redacted",
+      "mustNotContain": "sk-abcdef1234567890abcdef"
+    },
+    {
+      "pattern": "openai-sk-neg",
+      "text": "a task-based workflow helps",
+      "expected": "unchanged",
+      "note": "task-based 含子串 sk-，但前一个字符是字母，不得误杀"
+    },
+    {
+      "pattern": "github-pat-classic",
+      "text": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
+      "expected": "redacted",
+      "mustNotContain": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
+    },
+    {
+      "pattern": "github-pat-fine",
+      "text": "github_pat_11ABCDEFG0abcdefghij0abcdEF_12345",
+      "expected": "redacted",
+      "mustNotContain": "github_pat_11ABCDEFG0abcdefghij0abcdEF_12345"
+    },
+    {
+      "pattern": "slack-token",
+      "text": "xoxb-123456789012-1234567890123-abcdefghijklmnopqrstuvwx",
+      "expected": "redacted",
+      "mustNotContain": "xoxb-"
+    },
+    {
+      "pattern": "google-api",
+      "text": "AIzaSyA1234567890abcdefghijklmnopqrstuv",
+      "expected": "redacted",
+      "mustNotContain": "AIzaSyA1234567890abcdefghijklmnopqrstuv"
+    },
+    {
+      "pattern": "jwt",
+      "text": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+      "expected": "redacted",
+      "mustNotContain": "eyJhbGciOiJIUzI1NiJ9"
+    },
+    {
+      "pattern": "pem",
+      "text": "-----BEGIN RSA PRIVATE KEY----- MIIBejANBgkq -----END RSA PRIVATE KEY-----",
+      "expected": "redacted",
+      "mustNotContain": "MIIBejANBgkq"
+    },
+    {
+      "pattern": "bearer-neg",
+      "text": "the bearer of the ring arrives",
+      "expected": "unchanged",
+      "note": "Bearer 后跟普通短语（无 20+ 凭据形态 token），不得误杀"
+    },
+    {
+      "pattern": "normal-text",
+      "text": "Reading logs helps operators diagnose production incidents quickly.",
+      "expected": "unchanged"
+    }
+  ]
+}
