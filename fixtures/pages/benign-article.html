@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<!-- 良性文章页：段落/列表/链接/引用/表格/代码/图片全部保留；授权后必须成功捕获。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>理解事件驱动架构</title>
+</head>
+<body>
+  <main>
+    <article>
+      <h1>理解事件驱动架构</h1>
+      <p>事件驱动架构把系统间的协作从直接调用改为经由事件的间接协作。生产者只负责陈述事实，消费者自行决定如何响应，双方在时间与空间上解耦。</p>
+      <p>这种解耦带来的主要收益是演进自由度：新增消费者不需要改动生产者，扩容只需要增加消费者实例。代价则是链路可观测性下降，需要依赖可靠的追踪与幂等设计来补偿。</p>
+      <h2>核心概念</h2>
+      <ul>
+        <li>事件（fact）：已经发生的事情，不可变。</li>
+        <li>命令（intent）：希望对方做的事情，可拒绝。</li>
+        <li>投影（projection）：按需从事件流推导的读模型。</li>
+      </ul>
+      <blockquote>事件是事实的陈述，而不是请求的伪装。</blockquote>
+      <h3>示例：消费者骨架</h3>
+      <pre><code>for await (const event of stream) {
+  await handle(event)
+  await checkpoint.commit(event.offset)
+}</code></pre>
+      <p>消费进度的提交必须发生在处理成功之后，否则崩溃恢复会跳过未处理的事件。</p>
+      <h3>对比</h3>
+      <table>
+        <thead><tr><th>维度</th><th>请求响应</th><th>事件驱动</th></tr></thead>
+        <tbody>
+          <tr><td>耦合</td><td>直接</td><td>间接</td></tr>
+          <tr><td>时序</td><td>同步</td><td>异步</td></tr>
+          <tr><td>回溯</td><td>困难</td><td colspan="2">天然支持</td></tr>
+        </tbody>
+      </table>
+      <p>延伸阅读见 <a href="https://example.com/architecture/events">事件架构指南</a> 与 <a href="https://example.com/docs/patterns">模式目录</a>。</p>
+      <figure>
+        <img src="https://example.com/images/pipeline.png" alt="事件管道示意图：生产者到队列到三个消费者">
+        <figcaption>图 1：事件管道拓扑</figcaption>
+      </figure>
+      <p>最后，事件驱动不是银弹。当业务本质是查询而非事实时，强行事件化只会增加复杂度。</p>
+    </article>
+  </main>
+</body>
+</html>

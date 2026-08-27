@@ -9,7 +9,7 @@
 | E-01 | TypeScript 单语 monorepo（pnpm workspace），Extension 与桌面端共享契约包 | 接受 |
 | E-02 | 桌面壳采用 Electron；Demo 阶段 Windows x64 单目标 | 接受 |
 | E-03 | Native Host 先验证复用主 Electron exe 的单 exe 双模式；使用 Chrome 启动参数 + stdio 管道联合识别，失败则进入独立 host 可执行文件的替代 ADR；host 逻辑独立成包、无状态、幂等 | 接受（带验证门）→ **验证门未通过，已由 [ADR-002](ADR-002_NATIVE_HOST_REPLACEMENT_DRAFT.md) 取代（2026-08-26 批注，用户授权）** |
-| E-04 | 存储：better-sqlite3 + WAL + 应用数据目录下的 blob 目录；SQLite 事务维护索引与引用，blob 走同卷暂存 + 原子 rename，并用启动 reconciliation 收敛文件系统与数据库的不原子窗口 | 接受 |
+| E-04 | 存储：better-sqlite3 + WAL + 应用数据目录下的 blob 目录；SQLite 事务维护索引与引用，blob 走同卷暂存 + 原子 rename，并用启动 reconciliation 收敛文件系统与数据库的不原子窗口 | 接受 → **引擎由 [ADR-003](ADR-003_STORE_FILE_SYSTEM.md) 取代为纯文件系统（2026-08-27 批注，用户批准）：行为语义不变，better-sqlite3 因 Electron-as-Node 与纯 Node 双 ABI 打包风险后置** |
 | E-05 | demo-projector-v1 的 DOM 解析用 linkedom，离线、禁网络；夹具证明不足时回退 jsdom | 接受 |
 | E-06 | ModelAdapter 按 OpenAI-compatible Chat Completions 设计；baseUrl/apiKey/model 全部来自环境变量；优先 `response_format=json_schema`，降级 `json_object`；本地 zod 二次校验失败关闭 | 接受 |
 | E-07 | Token 估算确定性公式：`ceil(ASCII 码点数 / 4) + 非 ASCII 码点数`；四个上限独立生效，任一超限要求缩小 scope | 接受 |
@@ -105,6 +105,11 @@ Bitwarden 只能作为“桌面应用与浏览器扩展通过 Native Messaging �
 | `.bat` wrapper 启动 node 脚本 | Chrome 对 bat wrapper 的引号/编码行为不可靠，社区坑多 |
 
 ## 3. E-04：存储实现
+
+> **批注（2026-08-27）**：本节描述的 SQLite 实现由
+> [ADR-003](ADR-003_STORE_FILE_SYSTEM.md) 在 P0 阶段取代为纯文件系统实现
+> （host 是唯一写者，无需 SQLite writer lock 串行化）；下述表结构与事务语义
+> 作为后续替换引擎时的目标设计保留。
 
 规范已冻结 SQLite + blob 目录 + 事务 + 原子 rename（`P0_DEMO_SCOPE.md` §2.3）。本 ADR 补实现选择：
 

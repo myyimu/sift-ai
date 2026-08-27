@@ -74,7 +74,8 @@ manifest 的 path 指向 `pack2\win-unpacked\SiftHost.cmd`——重新打包到�
 |---|---|---|
 | 静态 | `pnpm lint` / `pnpm lint:ast` | 全仓 / 观察侧两层规则 |
 | 类型 | `pnpm typecheck` | 全部 workspace 包 |
-| 单元 | `pnpm test` | vitest（96 用例）。**必须从仓库根跑**：`pnpm -r test` 会因 eslint-sift-readonly 包的 root 配置找不到测试文件而误报失败 |
+| 单元 | `pnpm test` | vitest（280 用例：shared 契约 / host framing+mode+capture 协议 / store / extension capture·debounce·transport / dump 工具 / eslint 规则正反例）。**必须从仓库根跑**：`pnpm -r test` 会因 eslint-sift-readonly 包的 root 配置找不到测试文件而误报失败 |
+| 全链路（零 Chrome） | `pnpm vitest run apps/extension/test/e2e` | linkedom 夹具 → capture → transport → 真实 host-loop → 真实 FsStore 的 in-process 闭环（含全量重放去重） |
 | 模拟 Chrome spike | `node tools/spike/run-e03-spike.mjs` | UI 开/关两态各 100 次 connect/disconnect + 帧往返；`--rounds 10` 快速冒烟 |
 | 单链路诊断 | `node tools/spike/manual-roundtrip.mjs [--ui]` | 真实 `.cmd` 链路单次往返；`--ui` 先起 UI 实例 |
 | E2E 管道自检 | `node tools/spike/run-chrome-e2e.mjs --cft --plumbing` | 无需注册表；验证 Chrome 启动/扩展加载/SW/报告通道/connectNative 全链触达 |
@@ -86,7 +87,52 @@ manifest 的 path 指向 `pack2\win-unpacked\SiftHost.cmd`——重新打包到�
 - E2E 结束后确认无残留：`tasklist /FI "IMAGENAME eq Sift.exe"`（harness 已前置检查并
   树杀回收，正常情况无需手动清理）。
 
-## 5. 常见问题速查
+## 5. 手动演示：授权 → 捕获 → 落盘（Phase 2 闭环）
+
+前置：§1 一次性准备完成（含 `register`）。演示的是**用户手势授权当前 Tab → 脱敏 DOM
+快照 → Native Messaging → 本地 FS Store** 的完整闭环（ADR-003）。
+
+### 5.1 起本地夹具源
+
+```bash
+node tools/scripts/serve-fixtures.mjs        # 127.0.0.1:8765，仅伺服 fixtures/pages/
+```
+
+（sanitizeUrl 只放行 http/https，`file://` 打开夹具会被授权判定拒绝——这是设计行为，
+不是故障。）
+
+### 5.2 正路径：良性文章页
+
+1. Chrome（已加载 `apps/extension/dist`，§2.3）打开
+   `http://127.0.0.1:8765/benign-article.html`；
+2. 点击扩展 action 图标 → badge 显示 `S`（授权 + ISOLATED 注入 + 初始快照）；
+3. 验证落盘（只读，绝不打印正文）：
+
+```bash
+node tools/scripts/dump-store.mjs            # 缺省 %LOCALAPPDATA%\Sift\store
+```
+
+预期：`observations.jsonl` 至少 2 行（`authorization_granted` + `dom_snapshot`）、
+`page-states` 1 个（url/title 可见、snapshotBlob 为短 hash）、`blobs` ≥ 1 个。
+
+4. 关闭该 Tab → 再 dump：journal 追加 `authorization_revoked`（3 行）。
+
+### 5.3 负路径（安全边界演示）
+
+| 夹具页 | 预期 |
+|---|---|
+| `sensitive-url.html` | 捕获成功；blob 里的链接 href：token 参数被剔、敏感 path/scheme/host 链接被剥 href（用 `dump-store.mjs` 看行数，内容用 SQLite/编辑器自查 blob 文件） |
+| `contenteditable-editor.html` | badge 亮但不落任何 dom_snapshot——编辑区整树丢弃后不足 readable-v1，源端 `capture_too_little_content` 失败关闭；诊断在扩展 SW 的 console（`chrome://extensions` → service worker） |
+| 直接访问敏感站（如 mail.google.com）后点图标 | 授权被拒（域名 denylist），无任何落盘 |
+
+### 5.4 幂等重放演示
+
+对**同一页面**再点一次 action 图标：同源幂等（只重注入 CS，不产生新的
+`authorization_granted`）；若手动重发同 observation（模拟 commit_ack 丢失），host 靠
+journal 幂等返回 `deduplicated`——`pnpm vitest run apps/extension/test/e2e` 里有该场景
+的自动化断言（重放后 journal 行数不变、blob 数不变）。
+
+## 6. 常见问题速查
 
 | 症状 | 原因与处理 |
 |---|---|
@@ -96,9 +142,9 @@ manifest 的 path 指向 `pack2\win-unpacked\SiftHost.cmd`——重新打包到�
 | connectNative 报 `host not found` | 注册表未注册或 manifest path 指向的目录已变 → `status` 查看、`register` 修正 |
 | 重打包报 app.asar 被锁 | IDE 监视器占用 → 换 `directories.output` 目录，或参照 `.vscode/settings.json` 排除监视 |
 
-## 6. 文档索引
+## 7. 文档索引
 
 - 需求与冻结规范：`READ_ONLY_BROWSER_OBSERVER_SPEC.md`、`P0_*.md`、`CAPTURE_ARCHITECTURE.md`
-- 工程决策：`ADR-001_DEMO_ENGINEERING.md`（E-01~E-09）、`ADR-002_NATIVE_HOST_REPLACEMENT_DRAFT.md`（host 形态）
+- 工程决策：`ADR-001_DEMO_ENGINEERING.md`（E-01~E-09）、`ADR-002_NATIVE_HOST_REPLACEMENT_DRAFT.md`（host 形态）、`ADR-003_STORE_FILE_SYSTEM.md`（FS store）
 - 环境坑全量清单与 spike 工具说明：`tools/spike/README.md`
 - 代理/协作约束：`AGENTS.md`

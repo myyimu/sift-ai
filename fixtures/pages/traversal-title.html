@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<!-- 路径穿越标题页：title 含 ../ 与盘符样式片段，sanitizeTitle 必须替换为空格；title 永不进落盘路径。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>../../../etc/passwd C:\Users\secret :x?"&lt;&gt;|</title>
+</head>
+<body>
+  <main>
+    <h1>路径穿越标题测试页</h1>
+    <p>页面标题包含路径穿越片段、Windows 盘符与文件系统保留字符。捕获必须成功，且 payload 的 title 字段中这些字符全部被替换为空格，不允许构成任何路径片段。</p>
+    <p>正文第二段：标题清洗发生在标题字段上，与正文无关；正文中的普通斜杠（例如路径说明 /usr/local/bin）不受标题规则影响，仅受密钥脱敏约束。</p>
+    <p>正文第三段：确认清洗后的标题不含反斜杠、冒号与连续的点号穿越序列。</p>
+  </main>
+</body>
+</html>

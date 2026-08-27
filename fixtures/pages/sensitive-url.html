@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<!-- 敏感 URL 页：链接 href 中的凭证参数被剔除、敏感路径链接剥 href、页面 URL 本身敏感时整页拒绝。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>链接集合页</title>
+</head>
+<body>
+  <main>
+    <h1>链接集合页</h1>
+    <p>本页正文用于抬高可读字符数，使捕获可以成功，从而逐一验证链接清洗规则：带凭证参数的链接剔除参数后保留，指向敏感路径的链接剥离 href 属性，普通链接原样保留。</p>
+    <ul>
+      <li><a href="https://example.com/docs?page=2&amp;token=abc123&amp;sort=title">带 token 的文档链接</a>：token 参数必须被剔除，page 与 sort 保留。</li>
+      <li><a href="https://example.com/login">登录入口链接</a>：目标 path 命中 deny 词干，href 必须被剥离。</li>
+      <li><a href="https://example.com/docs%2Fauth">编码绕过链接</a>：先解码再判定，必须命中 deny。</li>
+      <li><a href="https://example.com/normal/path">普通链接</a>：href 原样保留。</li>
+      <li><a href="javascript:alert(1)">脚本协议链接</a>：scheme 不在白名单，href 必须被剥离。</li>
+      <li><a href="https://accounts.google.com/signin">域名黑名单链接</a>：host 命中 denylist，href 必须被剥离。</li>
+    </ul>
+    <p>结束段落：链接文本本身不受影响，只有 href 属性按规则清洗。</p>
+  </main>
+</body>
+</html>

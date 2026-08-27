@@ -8,5 +8,22 @@ export {
   MAX_FRAME_BYTES,
   splitIntoChunks,
 } from './framing'
-export { runNativeHostLoop, type ReadableLike, type WritableLike, type NativeHostLoopOptions } from './host-loop'
+export {
+  runNativeHostLoop,
+  FailClosed,
+  type ReadableLike,
+  type WritableLike,
+  type NativeHostLoopOptions,
+} from './host-loop'
 export { isSpikePing, spikePongHandler, type SpikePing, type SpikePong } from './protocol'
+export {
+  CAPTURE_VERSION,
+  PROTOCOL_VERSION,
+  REDACTION_POLICY,
+  createCaptureProtocolHandler,
+  type CaptureCommitResult,
+  type CaptureObservationRef,
+  type CapturePageWatermark,
+  type CaptureProtocolOptions,
+  type CaptureStore,
+} from './capture-protocol'

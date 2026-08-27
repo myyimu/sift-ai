@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<!-- 脚本/样式重污染页：script/style/template/noscript/svg 内的秘密与追踪代码必须整树移除，正文保留。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>重脚本页正文</title>
+  <style>
+    .hidden-secret { color: red; }
+    /* sk-proj-STYLEBLOCKSECRET1234567890 不得泄露 */
+  </style>
+  <script>
+    // 脚本块的密钥必须随 script 整树删除：AKIAIOSFODNN7EXAMPLE
+    window.tracker = { apiKey: 'ghp_SCRIPTBLOCKSECRET0000000000' }
+  </script>
+  <template id="tpl"><span>模板内容不应出现 AKIATEMPLATESECRET0000000</span></template>
+</head>
+<body>
+  <noscript><p>请启用 JavaScript 查看完整内容 noscriptsecret</p></noscript>
+  <svg width="10" height="10"><circle r="5"/></svg>
+  <main>
+    <h1>重脚本页正文</h1>
+    <p>这一页塞满了脚本、样式、模板与内联事件处理器，但正文本身是普通的技术内容：说明如何在不执行任何页面代码的前提下，仅凭静态 DOM 结构提取可读文本。</p>
+    <p>正文里出现密钥样例 AKIAIOSFODNN7EXAMPLE 时必须被文本层脱敏替换，而不是删除所在段落。</p>
+    <div onclick="steal()" data-tracking="abc123">内联事件与追踪属性必须被属性白名单摘除，文字本身保留。</div>
+    <p>结尾段落：验证删噪之后的可读字符数仍高于阈值，捕获必须成功。</p>
+  </main>
+  <script>console.log('bottom script ghp_BOTTOMSECRET00000000000000')</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<!-- 富文本编辑器页：主体为 contenteditable 编辑区，整树丢弃（用户拍板 fail-closed）→ 剩余内容不足 readable-v1 → capture_too_little_content。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>在线笔记编辑器</title>
+</head>
+<body>
+  <main>
+    <h1>在线笔记编辑器</h1>
+    <div contenteditable="true" role="textbox">
+      <p>用户正在这里撰写私密笔记：这段内容绝不允许进入任何快照，无论它有多长。编辑区应当被整棵树丢弃，而不是部分保留。</p>
+      <p>编辑区第二段：继续填充大量私密文本以证明即使内容很长，也不会因为长度而放松丢弃策略。</p>
+    </div>
+    <div aria-label="comment-box" role="textbox">模拟评论区输入框，同样必须整树丢弃。</div>
+  </main>
+</body>
+</html>

@@ -1,27 +1,33 @@
-// @sift/store —— SQLite + blob 目录的本地 Store —— 骨架（ADR-001 §9 步骤 3 / E-04）。
+// @sift/store —— 本地 Capture Store（ADR-003：P0 用纯文件系统实现，引擎后置）。
 //
-// E-04 已冻结的语义（实现时逐条落地，本包不引入任何静默放宽）：
-//  - better-sqlite3 + WAL + busy_timeout=5000 + BEGIN IMMEDIATE；
-//  - 表：observations / page_states / sessions / blobs(hash PK, refCount) /
-//       blob_refs(ownerType, ownerId, hash, UNIQUE) / projections (kind, inputHash) 复合 PK；
-//  - refCount 是 blob_refs 的事务内缓存；reconciliation 只在 UI 模式启动时执行；
-//  - blob 写入顺序：staging 同卷 -> 校验长度 + hash + flush ->
-//       BEGIN IMMEDIATE -> 幂等检查 + TTL/配额复核 -> rename/复用 -> 插入 -> commit；
-//  - TTL 7 天 / Session 250 MiB / 全局 1 GiB；配额达到时暂停新捕获并要求用户删除，
-//    不自动删除未过期 Session（P0_DEMO_SCOPE §2.3）；
-//  - store_corrupt 失败关闭；打包时 better-sqlite3 走 asarUnpack。
-//
-// 步骤 3 引入 better-sqlite3 依赖（Windows 原生模块，骨架期不安装）。
-import type { ObservationEnvelope } from '@sift/shared'
-
-/** 幂等写入结果：commit ack 的数据部分（ADR-001 E-04）。 */
-export interface CommitResult {
-  /** 写入是否首次发生（false = 幂等复用已存在的相同内容）。 */
-  deduplicated: boolean
-  payloadHash: string
-}
-
-/** 步骤 3 的 Store 门面接口草案；实现前不可用，任何调用方不得假设其已存在。 */
-export interface SiftStore {
-  appendObservation(envelope: ObservationEnvelope, payload: Uint8Array): Promise<CommitResult>
-}
+// E-04 冻结语义的 FS 映射（ADR-003 §3，逐条落地，无静默放宽）：
+//  - 幂等：打开时扫 journal 建 id→payloadHash 索引；同 id 同 hash → deduplicated；
+//  - staging → 长度+hash 读回校验 → fsync → 原子 rename（同卷）→ journal append(fsync)
+//    → page-state tmp+rename 替换 → meta 刷新；
+//  - store_corrupt 失败关闭：journal 中段坏行 / 引用 blob 缺失或 hash 不符 /
+//    page-state 领先于 journal → 拒绝打开；断尾（末行不完整）→ 截断恢复；
+//  - TTL 7 天不自动清理（ADR-003 批准限制 #2）；Session 250MiB / 全局 1GiB
+//    配额在 append 前复核，超限抛 quota_exceeded；
+//  - host 进程是唯一写者；journal 是事实来源，page-state 落后时按 journal 重放补齐。
+// better-sqlite3 引入属后续独立决策（ADR-003 §5 退出条件）。
+export {
+  SiftFsStore,
+  SiftStoreError,
+  defaultStoreRoot,
+  openSiftStore,
+  type OpenSiftStoreOptions,
+  type ObservationRef,
+  type PageWatermark,
+  type SiftStore,
+  type SiftStoreErrorCode,
+  type StoreCommitResult,
+} from './fs-store'
+export {
+  PAGE_STATE_MAX_GAPS,
+  parsePageState,
+  reducePageState,
+  serializePageState,
+  type PageStateDoc,
+  type PageStateGap,
+  type SnapshotReplaceInfo,
+} from './page-state'

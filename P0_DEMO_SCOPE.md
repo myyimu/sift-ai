@@ -71,6 +71,11 @@ Demo 不实现 CanonicalUnit、UnitVersion、DerivedMetadata、Global Unit Index
 
 Demo 默认使用 SQLite 保存结构化索引和状态，压缩后的内容寻址 Snapshot blob 放在应用数据目录的独立 blob 目录；数据库事务提交索引和 blob 引用，blob 使用同目录临时文件 + 原子 rename。默认 TTL 为 7 天、单 Session 250 MiB、全局 1 GiB；达到配额时暂停新捕获并要求用户删除数据，不自动删除尚未过期的 Session。
 
+> **批注（2026-08-27，用户批准）**：P0 最小捕获闭环阶段，存储引擎由
+> [ADR-003](ADR-003_STORE_FILE_SYSTEM.md) 取代为纯文件系统实现（blob 目录 +
+> JSONL journal + page-state JSON）。TTL/配额/幂等/原子性等**行为语义不变**；
+> SQLite 引擎在出现第二个写者或投影查询需求时按 ADR-003 §5 退出条件另行决策。
+
 ### 2.4 Demo Evidence 投影
 
 用户提交问题前，从冻结 Page State 生成确定性投影：

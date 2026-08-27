@@ -15,10 +15,20 @@
 
 消费方：步骤 2 的 sanitize/sensitive 实现，及验收门 6 的回归测试。
 
-## pages/（步骤 4/6 补齐）
+## pages/（Phase 2 已就位）
 
-对应 P0_DEMO_SCOPE 验收门 12，至少覆盖：文章、列表、评论、代码、表格、SPA、
-恶意 prompt、表单、超大 DOM 九类页面 + 期望 DemoEvidenceProjection。
+安全捕获边界夹具（`apps/extension/test/capture.test.ts` 经 linkedom 消费；超限 DOM 测试内程序化生成，不落文件）：
 
-每类夹具需附带期望投影（blocks/kind/textHash/inputHash），使"相同 Page State 与
-projectionVersion 产生相同投影与 inputHash"（验收门 8）可自动回归。
+| 夹具 | 验证点 |
+|---|---|
+| `benign-article.html` | 段落/列表/链接/引用/表格/代码/图片全部保留，捕获成功 |
+| `script-style-heavy.html` | script/style/template/noscript/svg 整树移除；内联事件与追踪属性摘除；正文密钥文本脱敏 |
+| `form-secrets.html` | form/input/select/textarea/label/button 整树移除；预填 value 不残留 |
+| `sensitive-url.html` | href 凭证参数剔除、敏感 path/scheme/host 链接剥 href、普通链接保留 |
+| `traversal-title.html` | title 的路径穿越/盘符/保留字符替换为空格（title 永不进落盘路径） |
+| `contenteditable-editor.html` | contenteditable / role=textbox 子树整棵丢弃 → `capture_too_little_content` |
+| `duplicate-stable.html` | 同 DOM 同 reason 两次捕获 → 逐字节相同 payload（同 hash 同 blob） |
+| `spa-hash-nav.html` | hash 导航不重载文档，contentEpoch 自增随快照上报 |
+| `empty-skeleton.html` | 可读内容 < 80 非空白字符 → `capture_too_little_content`，不包装空页面 |
+
+期望投影（blocks/kind/textHash/inputHash）属下一阶段 Markdown/Evidence Projection 范畴，Phase 2 明确不做。

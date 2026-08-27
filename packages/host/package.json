@@ -8,7 +8,8 @@
     "./mode": "./src/mode.ts",
     "./framing": "./src/framing.ts",
     "./host-loop": "./src/host-loop.ts",
-    "./protocol": "./src/protocol.ts"
+    "./protocol": "./src/protocol.ts",
+    "./capture-protocol": "./src/capture-protocol.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit"

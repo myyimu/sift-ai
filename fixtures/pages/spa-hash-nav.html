@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<!-- SPA hash 导航页：popstate/hashchange 不重载文档，contentEpoch 自增并随快照上报。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>SPA 路由演示</title>
+</head>
+<body>
+  <main>
+    <h1>SPA 路由演示</h1>
+    <p>本页模拟单页应用：点击下方锚点只改变 location.hash，不触发文档重新加载。content script 必须继续存活，contentEpoch 自增，后续快照携带新的 epoch 值。</p>
+    <nav-hidden>
+      <!-- nav 会被删噪，但锚点文字放在正文段落里验证保留 -->
+    </nav-hidden>
+    <p>路由：<a href="#/section-a">第一节</a> · <a href="#/section-b">第二节</a> · <a href="#/section-c">第三节</a></p>
+    <div id="app">
+      <p>路由出口：当前渲染第一节内容。hash 变化后这里会被脚本替换，但替换内容仍是普通文本，可以被后续 mutation_merged 快照捕获。</p>
+    </div>
+  </main>
+</body>
+</html>

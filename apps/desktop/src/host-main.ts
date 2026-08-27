@@ -7,10 +7,16 @@
 // （allowed origin 严格相等 + --parent-window + stdio 均为管道）——失败即退出，
 // 绝不进入消息循环（失败关闭）。
 //
+// Phase 2（ADR-001 §9 步骤 3）：消息循环接 capture 协议（announce/chunk/commit +
+// journal 幂等落盘，ADR-003 FS store）。E-03 spike 的 ping/pong 由协议处理器内部
+// 兼容保留（真实 Chrome E2E harness 依赖）。store 打开失败 = store_corrupt/权限
+// 问题 → 失败关闭退出，不进入半可用状态。
+//
 // 以 extraResources 单文件（esbuild bundle，无外部依赖）发布在 asar 之外。
 import { detectNativeHostLaunch } from '@sift/host/mode'
 import { runNativeHostLoop } from '@sift/host/host-loop'
-import { spikePongHandler } from '@sift/host/protocol'
+import { createCaptureProtocolHandler } from '@sift/host/capture-protocol'
+import { defaultStoreRoot, openSiftStore, type SiftFsStore } from '@sift/store'
 
 // node 模式下 argv = [exe, host-main.js, origin, --parent-window=N]
 const launchOk = detectNativeHostLaunch(process.argv.slice(2), {
@@ -23,19 +29,36 @@ if (!launchOk) {
   process.exit(1)
 }
 
-process.stderr.write('[sift] host-main: node-mode spike ping/pong loop (ADR-001 E-03)\n')
+const rootDir = defaultStoreRoot()
+let store: SiftFsStore | null = null
+try {
+  store = await openSiftStore({
+    rootDir,
+    onRecover: (message) => process.stderr.write(`[sift] store recover: ${message}\n`),
+  })
+} catch (error) {
+  process.stderr.write(`[sift] host-main: store open failed (fail closed): ${String(error)}\n`)
+  process.exit(1)
+}
+if (store === null) process.exit(1)
+
+process.stderr.write(`[sift] host-main: capture protocol v1 loop, store at ${rootDir}\n`)
+
+const capture = createCaptureProtocolHandler({ store })
 
 runNativeHostLoop({
   stdin: process.stdin,
   stdout: process.stdout,
-  onMessage: spikePongHandler,
+  onMessage: capture.onMessage,
   onFatal: (error) => {
     process.stderr.write(`[sift] host loop fatal: ${String(error)}\n`)
     process.exitCode = 1
+    void store?.close()
   },
   onClosed: () => {
     // Chrome 断开（stdin end/close）：正常退出。
     process.stderr.write('[sift] host loop closed\n')
     process.exitCode = 0
+    void store?.close()
   },
 })

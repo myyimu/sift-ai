@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<!-- 重复快照稳定性页：同一文档、同一 reason 两次捕获必须产出字节相同的 payload（同 hash 命中同 blob）。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>稳定内容页</title>
+</head>
+<body>
+  <main>
+    <h1>稳定内容页</h1>
+    <p>本页内容固定不变：用于验证确定性序列化——同环境下对同一 DOM 的两次捕获，payload JSON 必须逐字节相同，因此 payloadHash 相同，落盘时命中同一个内容寻址 blob。</p>
+    <p>确定性要求 payload 不含时间戳、不含随机数、键序固定；时间与身份信息只存在于 envelope 层。</p>
+    <p>第三段正文确保删噪后可读字符数远超阈值。</p>
+  </main>
+</body>
+</html>

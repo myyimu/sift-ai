@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PassThrough } from 'node:stream'
 import { encodeFrame, FrameDecoder } from '../src/framing'
-import { runNativeHostLoop } from '../src/host-loop'
+import { FailClosed, runNativeHostLoop } from '../src/host-loop'
 import { spikePongHandler } from '../src/protocol'
 
 /** 把多个帧拼接成一个字节流。 */
@@ -119,5 +119,76 @@ describe('runNativeHostLoop', () => {
     await new Promise(r => setImmediate(r))
     expect(onFatal).not.toHaveBeenCalled()
     expect(onClosed).toHaveBeenCalledTimes(1)
+  })
+
+  it('async onMessage 乱序完成时，响应仍严格按帧到达顺序写出', async () => {
+    const stdin = new PassThrough()
+    const stdout = new PassThrough()
+    const collecting = collectFrames(stdout)
+    // 第一条消息延迟 50ms 完成，第二条立即完成——串行化链必须保住 1 -> 2 的写出顺序
+    const onMessage = (message: { id: number }): Promise<unknown> =>
+      message.id === 1
+        ? new Promise(resolve => setTimeout(() => resolve({ type: 'resp', id: 1 }), 50))
+        : Promise.resolve({ type: 'resp', id: 2 })
+
+    runNativeHostLoop({ stdin, stdout, onMessage })
+
+    stdin.end(framed({ id: 1 }, { id: 2 }))
+    const messages = await collecting
+    expect(messages.map(m => (m as { id: number }).id)).toEqual([1, 2])
+  })
+
+  it('FailClosed：先写 error 响应帧，随后 onFatal（不再处理后续帧）', async () => {
+    const stdin = new PassThrough()
+    const stdout = new PassThrough()
+    const collecting = collectFrames(stdout)
+    const onFatal = vi.fn()
+    const onMessage = (message: unknown): unknown => {
+      if ((message as { type?: string }).type === 'boom') {
+        throw new FailClosed({ type: 'error', code: 'hash_mismatch', message: 'fixed text', fatal: true })
+      }
+      return { type: 'resp' }
+    }
+
+    runNativeHostLoop({ stdin, stdout, onMessage, onFatal })
+
+    stdin.end(framed({ type: 'boom' }, { type: 'later' }))
+    const messages = await collecting
+    expect(messages).toEqual([{ type: 'error', code: 'hash_mismatch', message: 'fixed text', fatal: true }])
+    expect(onFatal).toHaveBeenCalledTimes(1)
+    expect(onFatal.mock.calls[0]?.[0]).toBeInstanceOf(FailClosed)
+  })
+
+  it('async onMessage reject（非 FailClosed）失败关闭，无响应帧', async () => {
+    const stdin = new PassThrough()
+    const stdout = new PassThrough()
+    const collecting = collectFrames(stdout)
+    const onFatal = vi.fn()
+
+    runNativeHostLoop({
+      stdin,
+      stdout,
+      onMessage: () => Promise.reject(new Error('store blew up')),
+      onFatal,
+    })
+
+    stdin.end(framed({ type: 'x' }))
+    const messages = await collecting
+    expect(messages).toEqual([])
+    expect(onFatal).toHaveBeenCalledTimes(1)
+  })
+
+  it('stdin end 排空在途 async 处理：延迟响应不丢', async () => {
+    const stdin = new PassThrough()
+    const stdout = new PassThrough()
+    const collecting = collectFrames(stdout)
+    const onMessage = (message: { id: number }): Promise<unknown> =>
+      new Promise(resolve => setTimeout(() => resolve({ type: 'resp', id: message.id }), 30))
+
+    runNativeHostLoop({ stdin, stdout, onMessage })
+
+    stdin.end(framed({ id: 1 }, { id: 2 }))
+    const messages = await collecting
+    expect(messages.map(m => (m as { id: number }).id)).toEqual([1, 2])
   })
 })

@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@sift/host": "workspace:*",
-    "@sift/shared": "workspace:*"
+    "@sift/shared": "workspace:*",
+    "@sift/store": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
