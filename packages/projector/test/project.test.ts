@@ -43,7 +43,7 @@ function buildParams(pages: readonly PageSpec[], over: Partial<ProjectQuestionPa
           type: 'document_started' as const, controlPayload: null,
         },
       ]),
-      pageStates: pages.map((p, i) => ({
+      pageStates: pages.map(p => ({
         pageInstanceId: p.pid, stateVersion: p.stateVersion ?? 1, lastAppliedSequence: 10,
         canonicalUrl: `https://example.com/${p.pid}`,
       })),

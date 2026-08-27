@@ -68,13 +68,19 @@ manifest 的 path 指向 `pack2\win-unpacked\SiftHost.cmd`——重新打包到�
   ```
   若打包输出目录变化，重跑 `register`（§2.4）。
 
+- **锁步顺序（2026-08-27 起，capture_failed 事件类型加入后）**：扩展与 host 必须
+  **先升 desktop 包、再重建/重载扩展**。旧 host 收到第一个 `capture_failed` 会因
+  事件类型不在冻结词表而 fail-closed 退出（invalid_message）——顺序颠倒会让捕获
+  管道在升级窗口内死掉。`pnpm build`（扩展）与 `pnpm build:desktop`（host）同仓库
+  同提交构建即天然同版本；仅手工只更新一侧时注意。
+
 ## 4. 测试（从快到慢，全部从仓库根执行）
 
 | 层 | 命令 | 说明 |
 |---|---|---|
 | 静态 | `pnpm lint` / `pnpm lint:ast` | 全仓 / 观察侧两层规则 |
 | 类型 | `pnpm typecheck` | 全部 workspace 包 |
-| 单元 | `pnpm test` | vitest（280 用例：shared 契约 / host framing+mode+capture 协议 / store / extension capture·debounce·transport / dump 工具 / eslint 规则正反例）。**必须从仓库根跑**：`pnpm -r test` 会因 eslint-sift-readonly 包的 root 配置找不到测试文件而误报失败 |
+| 单元 | `pnpm test` | vitest（365 用例：shared 契约 / host framing+mode+capture 协议 / store 含读侧 readOnly / extension capture·debounce·transport·SW 生命周期 / projector 抽取·投影·manifest / dump 工具 / eslint 规则正反例）。**必须从仓库根跑**：`pnpm -r test` 会因 eslint-sift-readonly 包的 root 配置找不到测试文件而误报失败 |
 | 全链路（零 Chrome） | `pnpm vitest run apps/extension/test/e2e` | linkedom 夹具 → capture → transport → 真实 host-loop → 真实 FsStore 的 in-process 闭环（含全量重放去重） |
 | 模拟 Chrome spike | `node tools/spike/run-e03-spike.mjs` | UI 开/关两态各 100 次 connect/disconnect + 帧往返；`--rounds 10` 快速冒烟 |
 | 单链路诊断 | `node tools/spike/manual-roundtrip.mjs [--ui]` | 真实 `.cmd` 链路单次往返；`--ui` 先起 UI 实例 |
@@ -122,7 +128,7 @@ node tools/scripts/dump-store.mjs            # 缺省 %LOCALAPPDATA%\Sift\store
 | 夹具页 | 预期 |
 |---|---|
 | `sensitive-url.html` | 捕获成功；blob 里的链接 href：token 参数被剔、敏感 path/scheme/host 链接被剥 href（用 `dump-store.mjs` 看行数，内容用 SQLite/编辑器自查 blob 文件） |
-| `contenteditable-editor.html` | badge 亮但不落任何 dom_snapshot——编辑区整树丢弃后不足 readable-v1，源端 `capture_too_little_content` 失败关闭；诊断在扩展 SW 的 console（`chrome://extensions` → service worker） |
+| `contenteditable-editor.html` | badge 亮但不落任何 dom_snapshot——编辑区整树丢弃后不足 readable-v1，源端 `capture_too_little_content` 失败关闭；2026-08-27 起该失败持久化为 `capture_failed` 观察行（payload 仅 kind/code/instanceNonce/contentEpoch，无页面内容），诊断详文仍在扩展 SW 的 console（`chrome://extensions` → service worker） |
 | 直接访问敏感站（如 mail.google.com）后点图标 | 授权被拒（域名 denylist），无任何落盘 |
 
 ### 5.4 幂等重放演示
@@ -131,6 +137,22 @@ node tools/scripts/dump-store.mjs            # 缺省 %LOCALAPPDATA%\Sift\store
 `authorization_granted`）；若手动重发同 observation（模拟 commit_ack 丢失），host 靠
 journal 幂等返回 `deduplicated`——`pnpm vitest run apps/extension/test/e2e` 里有该场景
 的自动化断言（重放后 journal 行数不变、blob 数不变）。
+
+### 5.5 跨源/同源导航与 capture_failed 计数（2026-08-27 起）
+
+前置：§5.2 的授权页还开着（badge 为 `S`）。
+
+1. **跨源导航**：在该 Tab 地址栏访问任一其他 origin 的页面 → 预期 badge 立即清空，
+   `dump-store.mjs` 见 `authorization_revoked`（reason=`cross_origin`）追加；
+2. **同源导航**：重新授权后在该站内点击任一同源链接 → 预期 badge 保持 `S`，
+   dump 见新的 `document_started` + `dom_snapshot`（CS 重注入、观察继续）；
+   瞬时注入失败会被误判为跨源（失败关闭方向）——重点 action 即恢复，属已知取舍；
+3. **capture_failed 入账**：授权 `contenteditable-editor.html` → dump 行数多出一条
+   `capture_failed`（`partialExtractionCount` 的来源）。注意它属控制事件、在
+   MAX_QUEUE=8 背压下可被逐出——计数语义是**下界**。
+
+自动化的 mock 语义验证见 `apps/extension/test/service-worker.test.ts`（文件头声明
+mock 局限）；真 Chrome 行为以本节手动步骤为准。
 
 ## 6. 常见问题速查
 

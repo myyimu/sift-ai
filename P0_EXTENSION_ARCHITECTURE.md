@@ -196,6 +196,14 @@ cross-origin
 
 History API 只改 URL、DOM 完全不变时，可以只更新 metadata，不必制造重复 Raw Snapshot。若 P0 无法可靠识别某类 SPA 路由，应报告限制；不得为此偷偷加入 `webNavigation` 权限。
 
+> **批注（2026-08-27，已落地）**：跨 origin 判定器已实现（`service-worker.ts`，
+> **权限清单零改动**）：`tabs.onUpdated`（无需任何权限即可收到 `status`）在
+> `status === 'complete'` 时对授权 tab 重注入固定 CS——成功 = 同源导航（activeTab
+> 仍有效，CS 哨兵幂等，观察继续并补上 `document_started`）；失败（executeScript
+> 拒绝）= Chrome 已撤销 activeTab（跨源/不可授权页）→ 即时 `revokeGrant(cross_origin)`。
+> 已知取舍：同源页瞬时 executeScript 错误会误撤权——失败关闭方向（用户重点即恢复），
+> P0 不做重试。CS 的 `pagehide`/`pageshow` 信号仍未接入（下轮）。
+
 ## 4. 源端数据最小化
 
 Raw Snapshot 可以保留页面结构，但不能把敏感表单状态原样送出 content script。

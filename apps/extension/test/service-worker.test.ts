@@ -89,7 +89,7 @@ function createChromeStub() {
     onMessage: { addListener: (cb: (message: unknown) => void) => portListeners.push(cb) },
     onDisconnect: { addListener: () => {} },
   }
-  let connectedNames: string[] = []
+  const connectedNames: string[] = []
   const connectNative = (name: string): typeof port => {
     connectedNames.push(name)
     return port

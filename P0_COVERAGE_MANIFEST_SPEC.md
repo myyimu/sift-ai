@@ -103,6 +103,12 @@ type CoverageKnownMissingReason =
   `capture_failure`、`authorization_gap`）：需要持久化的失败/授权事实；在 `capture_failed`
   事件落地前，相关计数按"未知下界"呈现，不得伪装为零。
 
+> **批注（2026-08-27）**：事件→盲区映射已在 `@sift/projector` 落地并可计算：
+> `capture_limit_exceeded`→`oversized_page`、`capture_too_little_content`→`editor_page_dropped`、
+> `capture_denied`→`denied_sensitive_url`、任一 `capture_failed`→`capture_failure`、
+> `authorizationGaps` 非空→`authorization_gap`。已知例外：action 点击时 `sanitizeUrl`
+> 拒绝授权仍是 SW console-only（未持久化——需要新增事件类型，属另一次锁步变更）。
+
 ## 5. 展示与提示词强制
 
 每次分析结果顶部必须渲染（文案可调，信息不得减）：
@@ -193,6 +199,12 @@ capture_too_little_content）只是 SW console 诊断，不落盘——`partialE
   contentEpoch? }`，**不含任何页面内容**；走现有 blob 传输管道与 journal 幂等。
 - 失败关闭语义不变：不包装、不降级、不产出部分快照；只是把"失败这一事实"入账。
 - 实现时序：与 Evidence/Question Projection 同阶段；先于 TopicProjection。
+
+> **批注（2026-08-27，已落地）**：capture_failed 自本轮起持久化——CS 上报带
+> `contentEpoch`，SW 以控制 payload 入队（detail 仅 console），host 零改动接受。
+> 派生实现于 `@sift/projector`（`deriveCoverageManifest`）。注意两点：
+> (1) capture_failed 属控制事件，在 MAX_QUEUE=8 背压下可被逐出——
+> `partialExtractionCount` 是下界；(2) 与旧 host 锁步部署（见 RUNBOOK §3）。
 
 ## 10. 验收
 
