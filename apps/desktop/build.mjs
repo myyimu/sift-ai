@@ -29,7 +29,8 @@ const common = {
 await build({ ...common, entryPoints: ['src/main.ts'], outfile: 'dist/main.js' })
 await build({ ...common, entryPoints: ['src/host-main.ts'], outfile: 'dist/host-main.js' })
 await build({ ...common, entryPoints: ['src/qa-cli.ts'], outfile: 'dist/qa-cli.js' })
-await build({ ...common, format: 'cjs', entryPoints: ['src/ui/preload.ts'], outfile: 'dist/ui/preload.js' })
+// .cjs 后缀：package.json "type":"module" 下 .js 会被当 ESM，而 sandbox 预载只支持 CJS
+await build({ ...common, format: 'cjs', entryPoints: ['src/ui/preload.ts'], outfile: 'dist/ui/preload.cjs' })
 await build({
   ...common,
   platform: 'browser',

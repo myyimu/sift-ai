@@ -64,7 +64,7 @@ if (isHost) {
         useContentSize: true,
         show: true,
         webPreferences: {
-          preload: join(app.getAppPath(), 'dist', 'ui', 'preload.js'),
+          preload: join(app.getAppPath(), 'dist', 'ui', 'preload.cjs'),
           sandbox: true,
           contextIsolation: true,
           nodeIntegration: false,
@@ -146,7 +146,7 @@ if (isHost) {
         }
       })
     } catch (error) {
-      process.stderr.write(`[sift] UI mode failed: ${String(error)}\n`)
+      process.stderr.write(`[sift] UI mode failed: ${String(error)}\n${error instanceof Error ? (error.stack ?? '') : ''}\n`)
       process.exitCode = 1
     }
   })()
