@@ -3,7 +3,11 @@
 // 冻结的边界（P0_DEMO_SCOPE §2.2 / ADR-001 E-04 / P0_EXTENSION_ARCHITECTURE）：
 //  - 仅在 Chrome 认可的用户手势（action 点击）后 scripting.executeScript 注入固定文件
 //    （显式 world:'ISOLATED'、仅主 frame：allFrames:false）；
-//  - manifest 无 host_permissions；跨 origin 后撤销并停止观察（验收门 3）；
+//  - manifest 无 host_permissions；跨 origin 后撤销并停止观察（验收门 3）。
+//    判定器（P0_EXTENSION_ARCHITECTURE §3.4，零权限）：tabs.onUpdated(status=complete，
+//    无需任何权限即可收到) 后对授权 tab 重注入固定 CS——成功=同源（activeTab 仍有效，
+//    哨兵幂等）；失败=Chrome 已撤销 activeTab（跨源/不可授权页）→ 即时撤权。
+//    已知取舍：同源页瞬时 executeScript 错误会误撤权（失败关闭方向，P0 不重试）；
 //  - 唯一网络出口是 chrome.runtime.connectNative -> com.dj.sift.demo
 //    （allowed_origins 只含固定 demo Extension ID）；
 //  - 大 payload 应用层分块 <= 256 KiB；host commit_ack 后才视为落盘完成。
@@ -145,6 +149,10 @@ async function handleActionClick(tab: chrome.tabs.Tab): Promise<void> {
     await injectContentScript(tab.id)
     return
   }
+  if (existing !== undefined) {
+    // 异源重点：先撤旧 grant（authorization_revoked 配对完整，旧 pageInstanceId 的 sequence 闭合）
+    await revokeGrant(tab.id, 'cross_origin', `${existing.grantedOrigin}/`)
+  }
 
   const grant: TabGrant = {
     pageInstanceId: `p-${crypto.randomUUID()}`,
@@ -175,7 +183,7 @@ async function injectContentScript(tabId: number): Promise<void> {
   })
 }
 
-/** 跨源/关Tab 撤销：清授权 + authorization_revoked 事件 + badge 清除。 */
+/** 跨源/关Tab 撤销：清授权 + authorization_revoked 事件 + badge 清除（两种 reason 都清）。 */
 async function revokeGrant(tabId: number, reason: 'cross_origin' | 'tab_closed', url: string): Promise<void> {
   const tabKey = String(tabId)
   const grant = grants.get(tabKey)
@@ -185,9 +193,7 @@ async function revokeGrant(tabId: number, reason: 'cross_origin' | 'tab_closed',
   if (state !== null) {
     await saveState({ sessionId: state.sessionId, tabs: grantsSnapshot() })
   }
-  if (reason === 'tab_closed') {
-    await chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {}) // tab 可能已不在
-  }
+  await chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {}) // tab 可能已不在/已跨源
   if (state === null) return
   await emit({
     tabId,
@@ -213,6 +219,31 @@ chrome.tabs.onRemoved.addListener(tabId => {
   })().catch(error => console.warn('[sift] tabs.onRemoved failed:', error))
 })
 
+// —— 跨 origin 即时撤权判定器（Option B：零权限变更，P0_EXTENSION_ARCHITECTURE §3.4） ——
+// tabs.onUpdated 无需任何权限即可收到 status（Chrome 只扣留 url/title 字段）。
+// status=complete 时对授权 tab 重注入固定 CS：
+//   成功 = 同源导航（activeTab 仍有效）→ CS 哨兵幂等，观察继续；
+//   失败 = Chrome 已撤销 activeTab（跨源/chrome:// 等不可授权页）→ 即时撤权。
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status !== 'complete') return
+  void handleNavigationComplete(tabId).catch(error => console.warn('[sift] tabs.onUpdated failed:', error))
+})
+
+async function handleNavigationComplete(tabId: number): Promise<void> {
+  const state = await loadState()
+  if (state === null) return
+  hydrateGrants(state)
+  const grant = grants.get(String(tabId))
+  if (grant === undefined) return // 未授权 tab 的导航：不产生任何观察
+  try {
+    await injectContentScript(tabId) // 同源：CS 重注入（document_started 由 CS 上报）
+  } catch {
+    // Chrome 拒绝注入 = activeTab 已被跨源导航撤销 → 失败关闭，即时撤权。
+    // 已知取舍：同源页瞬时 executeScript 错误同样走这里（误撤权 = 用户重点即恢复，P0 不重试）。
+    await revokeGrant(tabId, 'cross_origin', `${grant.grantedOrigin}/`)
+  }
+}
+
 // —— CS 消息 ——
 
 chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
@@ -226,7 +257,7 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
 })
 
 async function handleCsMessage(
-  msg: { sift: 1; kind: string; instanceNonce: string; contentEpoch?: number; url?: string; title?: string; payloadJson?: string },
+  msg: { sift: 1; kind: string; instanceNonce: string; contentEpoch?: number; code?: string; detail?: string; url?: string; title?: string; payloadJson?: string },
   sender: chrome.runtime.MessageSender,
 ): Promise<void> {
   const tabId = sender.tab?.id
@@ -238,10 +269,9 @@ async function handleCsMessage(
   const grant = grants.get(String(tabId))
   if (grant === undefined) return // 未授权 tab 的注入：忽略（不产生观察）
   if (senderOrigin !== undefined && senderOrigin !== grant.grantedOrigin) {
-    // 跨源：立即撤销（失败关闭）
+    // 跨源：立即撤销（失败关闭；badge 由 revokeGrant 统一清除）
     const url = sanitizeUrl(msg.url ?? sender.tab?.url ?? senderOrigin)
     await revokeGrant(tabId, 'cross_origin', url.denied ? senderOrigin : url.safeUrl)
-    await chrome.action.setBadgeText({ tabId, text: '' })
     return
   }
 
@@ -284,9 +314,31 @@ async function handleCsMessage(
       })
       return
     }
-    case 'capture_failed':
-      console.warn(`[sift] capture_failed（${String(msg.instanceNonce)}）：只记诊断，不落盘`)
+    case 'capture_failed': {
+      // spec §9：持久化 {kind, code, instanceNonce, contentEpoch}——无 detail、无页面内容。
+      // detail 只走 console（本地化自由文本不进 hash 稳定数据）。Grant 保留（失败 ≠ 授权结束）。
+      if (typeof msg.code !== 'string') return
+      console.warn(`[sift] capture_failed（${msg.instanceNonce}/${msg.code}）：${msg.detail ?? ''}`)
+      const failUrlResult = sanitizeUrl(msg.url ?? sender.tab?.url ?? '')
+      const failUrl = failUrlResult.denied || failUrlResult.safeUrl === '' ? grant.grantedOrigin : failUrlResult.safeUrl
+      const failEpoch = typeof msg.contentEpoch === 'number' ? msg.contentEpoch : 0
+      await emit({
+        tabId,
+        grant,
+        sessionId: state.sessionId,
+        type: 'capture_failed',
+        source: 'extension',
+        url: failUrl,
+        contentEpoch: failEpoch,
+        payloadJson: controlPayloadJson({
+          kind: 'capture_failed',
+          code: msg.code,
+          instanceNonce: msg.instanceNonce,
+          contentEpoch: failEpoch,
+        }),
+      })
       return
+    }
     default:
       return
   }

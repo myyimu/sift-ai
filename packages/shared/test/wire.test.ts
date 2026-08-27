@@ -1,6 +1,7 @@
 // Capture 线协议 schema 正反例 + wire 纯工具（base64/chunk 数学）单元测试。
 import { describe, expect, it } from 'vitest'
 import {
+  CAPTURE_FAILURE_CODES,
   CONTROL_PAYLOAD_MAX_BYTES,
   SHA256_HASH_PATTERN,
   base64ToBytes,
@@ -8,6 +9,7 @@ import {
   chunkCountFor,
   payloadMaxBytesFor,
 } from '../src/wire'
+import type { CaptureFailedPayload } from '../src/wire'
 import {
   authorizationGrantedPayloadSchema,
   domSnapshotPayloadSchema,
@@ -210,14 +212,43 @@ describe('payload schema', () => {
     ).toBe(false)
   })
 
-  it('payloadSchemaFor：4 种首期事件有 schema，其余返回 null（fail-closed）', () => {
+  it('payloadSchemaFor：5 种落地事件有 schema，其余返回 null（fail-closed）', () => {
     expect(payloadSchemaFor('dom_snapshot')).toBe(domSnapshotPayloadSchema)
     expect(payloadSchemaFor('authorization_granted')).toBe(authorizationGrantedPayloadSchema)
     expect(payloadSchemaFor('authorization_revoked')).not.toBeNull()
     expect(payloadSchemaFor('document_started')).not.toBeNull()
+    expect(payloadSchemaFor('capture_failed')).not.toBeNull()
     expect(payloadSchemaFor('navigation_metadata_changed')).toBeNull()
     expect(payloadSchemaFor('dom_mutation_trigger')).toBeNull()
     expect(payloadSchemaFor('capture_paused')).toBeNull()
+  })
+})
+
+describe('CaptureFailedPayload（wire 纯类型 ↔ zod 对拍）', () => {
+  it('CAPTURE_FAILURE_CODES 冻结为 3 值', () => {
+    expect(CAPTURE_FAILURE_CODES).toEqual([
+      'capture_denied',
+      'capture_limit_exceeded',
+      'capture_too_little_content',
+    ])
+  })
+
+  it('wire 类型字面量通过 zod 终审（两侧契约一致）', () => {
+    const payload: CaptureFailedPayload = {
+      schemaVersion: 1,
+      kind: 'capture_failed',
+      captureVersion: 'capture-v1',
+      code: 'capture_denied',
+      instanceNonce: 'nonce-1',
+      contentEpoch: 1,
+    }
+    const schema = payloadSchemaFor('capture_failed')
+    expect(schema).not.toBeNull()
+    expect(schema!.safeParse(payload).success).toBe(true)
+  })
+
+  it('capture_failed 走控制事件字节上限（64KiB）', () => {
+    expect(payloadMaxBytesFor('capture_failed')).toBe(CONTROL_PAYLOAD_MAX_BYTES)
   })
 })
 

@@ -19,7 +19,7 @@ import {
   SNAPSHOT_MAX_NODES,
 } from '@sift/shared/limits'
 import { redactSecrets, sanitizeTitle, sanitizeUrl } from '@sift/shared/sanitize'
-import { CAPTURE_VERSION, type DomSnapshotPayload } from '@sift/shared/wire'
+import { CAPTURE_VERSION, type CaptureFailureCode, type DomSnapshotPayload } from '@sift/shared/wire'
 
 // —— 词表（版本化于 capture-v1；修改 = 修改脱敏语义，需同步 fixtures/pages 用例） ——
 
@@ -136,10 +136,8 @@ function sanitizeClone(node: Node, depth: number, tally: WalkTally): number {
 
 // —— 对外入口 ——
 
-export type CaptureFailureCode =
-  | 'capture_denied'
-  | 'capture_limit_exceeded'
-  | 'capture_too_little_content'
+// CaptureFailureCode 词表单一来源：@sift/shared/wire（与持久 payload schema 共用，A4）。
+export type { CaptureFailureCode }
 
 export type CaptureOutcome =
   | {

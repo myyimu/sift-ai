@@ -283,6 +283,60 @@ describe('capture-protocol：happy path', () => {
     expect(store.appended).toHaveLength(1)
   })
 
+  it('capture_failed 控制事件走完整 blob 管道并落盘（P0_COVERAGE_MANIFEST_SPEC §9）', async () => {
+    const store = new FakeStore()
+    const onMessage = makeHandler(store)
+    await onMessage({ type: 'hello', protocolVersion: 1, client: 'sift-extension' })
+
+    const failedPayload = {
+      schemaVersion: 1,
+      kind: 'capture_failed',
+      captureVersion: CAPTURE_VERSION,
+      code: 'capture_too_little_content',
+      instanceNonce: 'nonce-1',
+      contentEpoch: 0,
+    }
+    const t = buildTransfer({
+      payload: failedPayload,
+      envelope: { type: 'capture_failed', id: 'obs-fail', sequence: 3 },
+    })
+    await expect(onMessage(t.announce)).resolves.toMatchObject({ type: 'transfer_ack', status: 'ok' })
+    for (const chunk of t.chunks) {
+      await expect(onMessage(chunk)).resolves.toMatchObject({ type: 'chunk_ack' })
+    }
+    await expect(onMessage(t.commit)).resolves.toMatchObject({
+      type: 'commit_ack',
+      deduplicated: false,
+      lastAppliedSequence: 3,
+    })
+    expect(store.appended).toHaveLength(1)
+    expect(store.appended[0]?.envelope.type).toBe('capture_failed')
+    expect(JSON.parse(Buffer.from(store.appended[0]?.payload ?? []).toString('utf8'))).toEqual(failedPayload)
+  })
+
+  it('capture_failed payload 混入 detail（未知键）→ invalid_message，零写入（确定性防线）', async () => {
+    const store = new FakeStore()
+    const onMessage = makeHandler(store)
+    await onMessage({ type: 'hello', protocolVersion: 1, client: 'sift-extension' })
+
+    const t = buildTransfer({
+      payload: {
+        schemaVersion: 1,
+        kind: 'capture_failed',
+        captureVersion: CAPTURE_VERSION,
+        code: 'capture_denied',
+        instanceNonce: 'nonce-1',
+        detail: 'readable-v1 未在 5000ms 内满足',
+      },
+      envelope: { type: 'capture_failed', id: 'obs-fail-detail' },
+      transferId: 't-fail-detail',
+    })
+    await onMessage(t.announce)
+    for (const c of t.chunks) await onMessage(c)
+    await expectFail(onMessage(t.commit), 'invalid_message')
+    expect(store.appended).toHaveLength(0)
+  })
+
   it('同 transferId 重新 announce（SW commit_ack 超时重试）重置传输，chunk 从头可用', async () => {
     const store = new FakeStore()
     const onMessage = makeHandler(store)

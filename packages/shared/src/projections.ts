@@ -3,6 +3,7 @@
 // 对应 QuestionProjection、claimId 不得重复等）——那是 zod 无法表达的跨对象不变式，
 // 属于 ADR-001 §9 步骤 5 的 AnswerProjection 验证器，不在本文件实现。
 import { z } from 'zod'
+import { coverageManifestSchema } from './coverage'
 import { demoEvidenceBlockSchema } from './evidence'
 
 export const questionProjectionSchema = z.object({
@@ -19,6 +20,8 @@ export const questionProjectionSchema = z.object({
       }),
     )
     .min(1),
+  /** 覆盖声明（P0_COVERAGE_MANIFEST_SPEC §2）：无 manifest 的分析输出是无效输出。 */
+  coverage: coverageManifestSchema,
   blocks: z.array(demoEvidenceBlockSchema),
   inputHash: z.string().min(1),
   limits: z.object({

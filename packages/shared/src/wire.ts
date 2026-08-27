@@ -197,11 +197,36 @@ export interface DocumentStartedPayload {
   readonly sameOriginReinject: boolean
 }
 
+/** 捕获失败码（P0_COVERAGE_MANIFEST_SPEC §4 事件派生盲区的判别输入）。 */
+export const CAPTURE_FAILURE_CODES = [
+  'capture_denied',
+  'capture_limit_exceeded',
+  'capture_too_little_content',
+] as const
+
+export type CaptureFailureCode = (typeof CAPTURE_FAILURE_CODES)[number]
+
+/**
+ * 捕获失败控制事件（P0_COVERAGE_MANIFEST_SPEC §9）：payload 只含
+ * {kind, code, instanceNonce, contentEpoch?}，**不含任何页面内容、不含 detail**
+ * （detail 是本地化自由文本，只留 console 诊断，不进 hash 稳定的持久数据）。
+ * instanceNonce 属身份字段（控制事件幂等按 envelope.id，不按 payload hash）。
+ */
+export interface CaptureFailedPayload {
+  readonly schemaVersion: 1
+  readonly kind: 'capture_failed'
+  readonly captureVersion: 'capture-v1'
+  readonly code: CaptureFailureCode
+  readonly instanceNonce: string
+  readonly contentEpoch?: number
+}
+
 export type CapturePayload =
   | DomSnapshotPayload
   | AuthorizationGrantedPayload
   | AuthorizationRevokedPayload
   | DocumentStartedPayload
+  | CaptureFailedPayload
 
 // —— 纯工具 ——
 

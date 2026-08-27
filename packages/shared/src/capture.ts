@@ -17,6 +17,7 @@ import { observationEnvelopeSchema } from './envelope'
 import { NATIVE_MAX_CHUNK_BYTES } from './limits'
 import {
   BASE64_CANONICAL_PATTERN,
+  CAPTURE_FAILURE_CODES,
   CAPTURE_VERSION,
   PAGE_INSTANCE_ID_PATTERN,
   REDACTION_POLICY,
@@ -203,8 +204,19 @@ export const documentStartedPayloadSchema = z.object({
   sameOriginReinject: z.boolean(),
 }).strict()
 
+/** 捕获失败控制事件（wire.CaptureFailedPayload 的终审；spec §9 词表钉死，无 detail）。 */
+export const captureFailedPayloadSchema = z.object({
+  schemaVersion: z.literal(1),
+  kind: z.literal('capture_failed'),
+  captureVersion: captureVersionLiteral,
+  code: z.enum(CAPTURE_FAILURE_CODES),
+  instanceNonce: z.string().min(1).max(64),
+  contentEpoch: z.number().int().nonnegative().optional(),
+}).strict()
+
 /**
- * 按 envelope.type 取 payload schema；P0 首期只发 4 种事件，
+ * 按 envelope.type 取 payload schema；P0 落地 5 种事件
+ * （dom_snapshot + 4 控制事件，含 capture_failed），
  * 其余类型返回 null（capture-protocol 按 invalid_message 拒绝——fail-closed）。
  */
 export function payloadSchemaFor(
@@ -215,6 +227,7 @@ export function payloadSchemaFor(
     case 'authorization_granted': return authorizationGrantedPayloadSchema
     case 'authorization_revoked': return authorizationRevokedPayloadSchema
     case 'document_started': return documentStartedPayloadSchema
+    case 'capture_failed': return captureFailedPayloadSchema
     default: return null
   }
 }

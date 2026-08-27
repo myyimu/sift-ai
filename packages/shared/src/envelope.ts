@@ -5,7 +5,11 @@
 // 不代表内容安全——内容边界由 sensitive-v1 与 sanitize 层负责（ADR-001 E-08）。
 import { z } from 'zod'
 
-/** P0 冻结的事件类型（CAPTURE_ARCHITECTURE §4“建议的 P0 事件类型”）。未知类型一律拒绝。 */
+/**
+ * P0 冻结的事件类型（CAPTURE_ARCHITECTURE §4“建议的 P0 事件类型”）。未知类型一律拒绝。
+ * capture_failed（P0_COVERAGE_MANIFEST_SPEC §9）：捕获失败事实入账的控制事件，
+ * payload 不含任何页面内容——partialExtractionCount 与事件派生盲区的唯一数据源。
+ */
 export const OBSERVATION_TYPES = [
   'authorization_granted',
   'authorization_revoked',
@@ -15,6 +19,7 @@ export const OBSERVATION_TYPES = [
   'dom_snapshot',
   'capture_paused',
   'capture_resumed',
+  'capture_failed',
 ] as const
 
 export type ObservationType = (typeof OBSERVATION_TYPES)[number]

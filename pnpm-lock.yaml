@@ -61,6 +61,9 @@ importers:
       '@sift/host':
         specifier: workspace:*
         version: link:../../packages/host
+      '@sift/projector':
+        specifier: workspace:*
+        version: link:../../packages/projector
       '@sift/store':
         specifier: workspace:*
         version: link:../../packages/store
@@ -99,6 +102,9 @@ importers:
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@22.20.1)
 
   packages/shared:
     dependencies:

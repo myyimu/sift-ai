@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   answerProjectionSchema,
+  captureFailedPayloadSchema,
   observationEnvelopeSchema,
   questionProjectionSchema,
 } from '../src/index'
@@ -41,6 +42,11 @@ describe('observationEnvelopeSchema', () => {
     expect(observationEnvelopeSchema.safeParse(bad).success).toBe(false)
   })
 
+  it('capture_failed 事件类型接受（P0_COVERAGE_MANIFEST_SPEC §9）', () => {
+    const ok = { ...validEnvelope, type: 'capture_failed', source: 'extension' }
+    expect(observationEnvelopeSchema.safeParse(ok).success).toBe(true)
+  })
+
   it('未来数据平面来源（ax/network/interaction）拒绝（P0 只接受 extension/navigation/dom）', () => {
     for (const source of ['ax', 'network', 'interaction']) {
       const bad = { ...validEnvelope, source }
@@ -71,12 +77,47 @@ const validBlock = {
   ],
 }
 
+const validCoverage = {
+  schemaVersion: 1,
+  requestedScope: { kind: 'current_page', pageInstanceId: 'page-1' },
+  capturedFrom: '2026-08-26T00:00:00.000Z',
+  capturedTo: '2026-08-26T00:05:00.000Z',
+  sessionCount: 1,
+  pageCount: 1,
+  unitCount: 1,
+  unitCountBasis: 'deduped_text_blocks',
+  domains: ['https://example.com'],
+  visitedPagination: [
+    {
+      origin: 'https://example.com',
+      path: '/list',
+      observedSelectors: ['page=1', 'page=2'],
+      observedCount: 2,
+      exhausted: false,
+    },
+  ],
+  partialExtractionCount: 0,
+  authorizationGaps: [],
+  knownMissingReasons: [
+    'unvisited_pagination',
+    'unmounted_infinite_scroll',
+    'cross_origin_iframe',
+    'hidden_or_lazy_content',
+    'indistinguishable_absence',
+  ],
+  inputBounds: {
+    sessions: ['sess-1'],
+    pageStateWatermarks: [{ pageInstanceId: 'page-1', stateVersion: 3, lastAppliedSequence: 12 }],
+  },
+}
+
 const validQuestionProjection = {
   schemaVersion: 1,
   projectionVersion: 1,
   question: '这篇文章的结论是什么？',
   scope: 'current_page',
   pageStateWatermarks: [{ pageInstanceId: 'page-1', stateVersion: 3, lastAppliedSequence: 12 }],
+  coverage: validCoverage,
   blocks: [validBlock],
   inputHash: 'sha256:proj1',
   limits: { maxPages: 20, maxBlocks: 200, maxUtf8Bytes: 524288, maxEstimatedTokens: 32000 },
@@ -86,6 +127,41 @@ const validQuestionProjection = {
 describe('questionProjectionSchema', () => {
   it('接受合法投影', () => {
     expect(questionProjectionSchema.parse(validQuestionProjection)).toBeTruthy()
+  })
+
+  it('缺失 coverage 拒绝（无 manifest 的分析输出是无效输出，spec §10.2）', () => {
+    const bad: Record<string, unknown> = { ...validQuestionProjection }
+    delete bad.coverage
+    expect(questionProjectionSchema.safeParse(bad).success).toBe(false)
+  })
+
+  it('coverage.exhausted 非 false 字面量拒绝（观察者永不声明穷尽）', () => {
+    const bad = {
+      ...validQuestionProjection,
+      coverage: {
+        ...validCoverage,
+        visitedPagination: [
+          { ...validCoverage.visitedPagination[0], exhausted: true },
+        ],
+      },
+    }
+    expect(questionProjectionSchema.safeParse(bad).success).toBe(false)
+  })
+
+  it('coverage 词表之外的盲区 reason 拒绝（词表冻结）', () => {
+    const bad = {
+      ...validQuestionProjection,
+      coverage: { ...validCoverage, knownMissingReasons: ['site_wide_crawl_done'] },
+    }
+    expect(questionProjectionSchema.safeParse(bad).success).toBe(false)
+  })
+
+  it('partialExtractionCount 为 null 合法（capture_failed 持久化前的历史语义）', () => {
+    const legacy = {
+      ...validQuestionProjection,
+      coverage: { ...validCoverage, partialExtractionCount: null },
+    }
+    expect(questionProjectionSchema.safeParse(legacy).success).toBe(true)
   })
 
   it('truncation 只允许字面量 none（全量或不发送）', () => {
@@ -151,5 +227,47 @@ describe('answerProjectionSchema', () => {
       blocks: [{ ...validBlock, kind: 'tweet' }],
     }
     expect(questionProjectionSchema.safeParse(bad).success).toBe(false)
+  })
+})
+
+const validCaptureFailedPayload = {
+  schemaVersion: 1,
+  kind: 'capture_failed',
+  captureVersion: 'capture-v1',
+  code: 'capture_too_little_content',
+  instanceNonce: 'nonce-abc',
+  contentEpoch: 2,
+}
+
+describe('captureFailedPayloadSchema', () => {
+  it('接受合法 payload（spec §9：只含 kind/code/instanceNonce/contentEpoch）', () => {
+    expect(captureFailedPayloadSchema.parse(validCaptureFailedPayload)).toBeTruthy()
+  })
+
+  it('contentEpoch 可省略', () => {
+    const ok: Partial<typeof validCaptureFailedPayload> = { ...validCaptureFailedPayload }
+    delete ok.contentEpoch
+    expect(captureFailedPayloadSchema.safeParse(ok).success).toBe(true)
+  })
+
+  it('未知键拒绝（detail 不得混入持久 payload）', () => {
+    const bad = { ...validCaptureFailedPayload, detail: 'readable-v1 未在 5000ms 内满足' }
+    expect(captureFailedPayloadSchema.safeParse(bad).success).toBe(false)
+  })
+
+  it('词表之外的 code 拒绝', () => {
+    const bad = { ...validCaptureFailedPayload, code: 'capture_crashed' }
+    expect(captureFailedPayloadSchema.safeParse(bad).success).toBe(false)
+  })
+
+  it('缺失 instanceNonce 拒绝', () => {
+    const bad: Partial<typeof validCaptureFailedPayload> = { ...validCaptureFailedPayload }
+    delete bad.instanceNonce
+    expect(captureFailedPayloadSchema.safeParse(bad).success).toBe(false)
+  })
+
+  it('非整数 contentEpoch 拒绝', () => {
+    const bad = { ...validCaptureFailedPayload, contentEpoch: 1.5 }
+    expect(captureFailedPayloadSchema.safeParse(bad).success).toBe(false)
   })
 })

@@ -43,6 +43,7 @@ export interface CsCaptureFailed {
   readonly kind: 'capture_failed'
   readonly instanceNonce: string
   readonly code: CaptureFailureCode
+  readonly contentEpoch: number
   readonly detail?: string
 }
 
@@ -77,12 +78,13 @@ function startObserving(): void {
         payloadJson: outcome.payloadJson,
       })
     } else {
-      // 失败关闭：不包装、不降级；报告给 SW 记诊断（不持久化页面内容）
+      // 失败关闭：不包装、不降级；报告给 SW 持久化 capture_failed（detail 仅 console 诊断）
       report({
         sift: 1,
         kind: 'capture_failed',
         instanceNonce,
         code: outcome.code,
+        contentEpoch,
         ...(outcome.detail !== undefined ? { detail: outcome.detail } : {}),
       })
       console.warn(`[sift] capture failed (${outcome.code}): ${outcome.detail ?? ''}`)
@@ -115,6 +117,7 @@ function startObserving(): void {
           kind: 'capture_failed',
           instanceNonce,
           code: 'capture_too_little_content',
+          contentEpoch,
           detail: `readable-v1 未在 ${READABLE_WAIT_MS}ms 内满足`,
         })
         console.warn('[sift] readable-v1 超时：capture_too_little_content')

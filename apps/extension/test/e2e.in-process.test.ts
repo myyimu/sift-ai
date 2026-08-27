@@ -26,6 +26,8 @@ import {
   type NativePortLike,
   type PendingObservation,
 } from '../src/transport'
+import { deriveCoverageManifest, projectQuestion, type ManifestFacts, type ManifestObservation } from '@sift/projector'
+import { questionProjectionSchema } from '@sift/shared'
 
 // —— 测试装置 ——
 
@@ -292,6 +294,138 @@ describe('in-process 全链路', () => {
       reason: 'initial_readable',
     })
     expect(outcome).toMatchObject({ ok: false, code: 'capture_too_little_content' })
-    // 源端失败 → SW 根本不会 enqueue → 不需要任何传输/host 断言（capture_failed 仅诊断）
+    // 源端失败 → 无快照可传；capture_failed 的持久化走 SW 管线（见下一用例与 service-worker.test.ts）
+  })
+
+  it('capture_failed 持久化 + 读 API 组装投影：store 读出 → manifest → projectQuestion 全链 ok', { timeout: 60000 }, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sift-e2e-pj-'))
+    try {
+      const store = await openSiftStore({ rootDir: root })
+      const harness = createHostHarness(store)
+      const transport: CaptureTransport = createCaptureTransport({
+        connectNative: () => harness.port,
+        sha256Hex: subtleSha256Hex,
+      })
+
+      const granted = observation(
+        'authorization_granted',
+        JSON.stringify({
+          schemaVersion: 1, kind: 'authorization_granted', captureVersion: CAPTURE_VERSION,
+          url: 'https://example.com/article', reason: 'user_gesture', origin: 'https://example.com',
+        }),
+        'extension',
+      )
+      const { document } = parseHTML(
+        '<html><head><title>投影文章</title></head><body><main><h1>投影文章标题</h1><p>这是用于投影全链验证的正文段落，长度超过二十个非空白字符，满足 readable-v1 的最低可读要求。</p><p>第二段正文内容，同样超过最低门槛，用于验证块生成与确定性排序。</p><p>第三段补充正文，确保删噪后的非空白字符总数超过八十个的快照门槛。</p></main></body></html>',
+      )
+      const snapOutcome = captureDomSnapshot(document, {
+        url: 'https://example.com/article?page=2',
+        title: '投影文章',
+        contentEpoch: 0,
+        reason: 'initial_readable',
+      })
+      if (!snapOutcome.ok) throw new Error(`快照失败：${snapOutcome.code}`)
+      const snapshot = observation('dom_snapshot', snapOutcome.payloadJson, 'dom')
+      const failed = observation(
+        'capture_failed',
+        JSON.stringify({
+          schemaVersion: 1, kind: 'capture_failed', captureVersion: CAPTURE_VERSION,
+          code: 'capture_too_little_content', instanceNonce: 'nonce-e2e-1', contentEpoch: 1,
+        }),
+        'extension',
+      )
+
+      transport.enqueue(granted)
+      transport.enqueue(snapshot)
+      transport.enqueue(failed)
+      await waitFor(() => transport.queueSize === 0, '三条观察全部 commit', 20000)
+      harness.teardown()
+      await store.close()
+
+      // —— 读侧：readOnly 打开，读 API 组装 ManifestFacts ——
+      const reader = await openSiftStore({ rootDir: root, readOnly: true })
+      const journal = await reader.readJournal()
+      expect(journal.map(r => r.type)).toEqual(['authorization_granted', 'dom_snapshot', 'capture_failed'])
+
+      const failedRow = journal.find(r => r.type === 'capture_failed')!
+      const failedBytes = await reader.readBlob(failedRow.payloadHash)
+      expect(JSON.parse(new TextDecoder().decode(failedBytes))).toEqual({
+        schemaVersion: 1, kind: 'capture_failed', captureVersion: CAPTURE_VERSION,
+        code: 'capture_too_little_content', instanceNonce: 'nonce-e2e-1', contentEpoch: 1,
+      }) // 持久 payload 无 detail、无页面内容（spec §9）
+
+      const pages = await reader.listPages()
+      expect(pages).toHaveLength(1)
+      const page = pages[0]!
+
+      // 控制事件 payload 从 blob 解码（dom_snapshot 置 null——正文不进 manifest）
+      const controlPayloads = new Map<string, unknown>()
+      for (const r of journal) {
+        if (r.type === 'dom_snapshot') continue
+        const bytes = await reader.readBlob(r.payloadHash)
+        controlPayloads.set(r.id, JSON.parse(new TextDecoder().decode(bytes)))
+      }
+
+      const facts: ManifestFacts = {
+        scope: { kind: 'demo_session', sessionId: 's-e2e' },
+        observations: journal.map((r): ManifestObservation => ({
+          id: r.id,
+          sessionId: r.sessionId,
+          tabId: r.tabId,
+          pageInstanceId: r.pageInstanceId,
+          sequence: r.sequence,
+          receivedAt: r.receivedAt,
+          url: r.url,
+          type: r.type,
+          controlPayload: r.type === 'dom_snapshot' ? null : controlPayloads.get(r.id) ?? null,
+        })),
+        pageStates: [{
+          pageInstanceId: page.pageInstanceId,
+          stateVersion: page.watermark.stateVersion,
+          lastAppliedSequence: page.watermark.lastAppliedSequence,
+          canonicalUrl: page.canonicalUrl,
+        }],
+      }
+
+      const manifest = deriveCoverageManifest({ ...facts, unitCount: 0 })
+      expect(manifest.partialExtractionCount).toBe(1)
+      expect(manifest.knownMissingReasons).toContain('capture_failure')
+      expect(manifest.knownMissingReasons).toContain('editor_page_dropped')
+      expect(manifest.visitedPagination).toEqual([
+        { origin: 'https://example.com', path: '/article', observedSelectors: ['page=2'], observedCount: 1, exhausted: false },
+      ])
+      expect(manifest.knownMissingReasons).toContain('unvisited_pagination')
+
+      // —— 投影：readSnapshotPayload 取真实脱敏 HTML → projectQuestion ——
+      const snapRow = journal.find(r => r.type === 'dom_snapshot')!
+      const payload = await reader.readSnapshotPayload(snapRow.payloadHash)
+      const result = projectQuestion({
+        question: '这篇投影文章的结论是什么？',
+        scope: 'demo_session',
+        pages: [{
+          sanitizedHtml: payload.html,
+          source: {
+            pageInstanceId: page.pageInstanceId,
+            stateVersion: page.watermark.stateVersion,
+            ordinal: 0,
+            ...(payload.title !== '' ? { title: payload.title } : {}),
+            safeUrl: payload.url,
+            capturedAt: snapRow.receivedAt,
+          },
+        }],
+        manifestFacts: facts,
+        modelContextWindow: 128_000,
+      })
+      expect(result.status).toBe('ok')
+      if (result.status !== 'ok') return
+      expect(questionProjectionSchema.safeParse(result.projection).success).toBe(true)
+      expect(result.projection.blocks.map(b => b.kind)).toEqual(['heading', 'paragraph', 'paragraph', 'paragraph'])
+      expect(result.projection.coverage.partialExtractionCount).toBe(1)
+      expect(result.projection.coverage.unitCount).toBe(4)
+      await reader.close()
+    } finally {
+      // Windows：句柄释放/Defender 扫描与删除有竞态——临时目录清理属 best-effort，失败不失败用例
+      await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => {})
+    }
   })
 })

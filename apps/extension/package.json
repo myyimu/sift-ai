@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "@sift/host": "workspace:*",
+    "@sift/projector": "workspace:*",
     "@sift/store": "workspace:*",
     "@types/chrome": "^0.0.300",
     "esbuild": "^0.25.0",

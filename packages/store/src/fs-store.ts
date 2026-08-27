@@ -14,9 +14,9 @@
 //   hash 不符 → store_corrupt 拒绝打开。
 // host 是唯一写者（批准限制 #1）；不自动 TTL 清理（#2），TTL 常量仅记录。
 import { createHash, randomUUID } from 'node:crypto'
-import { FileHandle, mkdir, open, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
+import { FileHandle, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { ObservationEnvelope } from '@sift/shared'
+import { domSnapshotPayloadSchema, type DomSnapshotPayload, type ObservationEnvelope, type ObservationType } from '@sift/shared'
 import { GLOBAL_QUOTA_BYTES, SESSION_QUOTA_BYTES, TTL_DAYS } from '@sift/shared/limits'
 import { PAGE_INSTANCE_ID_PATTERN, SHA256_HASH_PATTERN } from '@sift/shared/wire'
 import {
@@ -60,6 +60,36 @@ export interface StoreCommitResult {
   readonly lastAppliedSequence: number
 }
 
+/** Session 摘要（readJournal 聚合；首见序 = journal 内首次出现的顺序）。 */
+export interface StoreSessionSummary {
+  readonly sessionId: string
+  readonly firstReceivedAt: string
+  readonly lastReceivedAt: string
+  readonly pageInstanceIds: readonly string[]
+  readonly observationCount: number
+}
+
+/** Page 摘要（journal 行 + 重放 page-state 的连接；sessionId/tabId 取该页首行）。 */
+export interface StorePageSummary {
+  readonly pageInstanceId: string
+  readonly sessionId: string
+  readonly tabId: string
+  readonly watermark: PageWatermark
+  readonly canonicalUrl: string
+  readonly title: string
+  /** 最近一次 dom_snapshot 的内容寻址引用；未有快照前为 ''。 */
+  readonly snapshotBlobRef: string
+  readonly observationCount: number
+  readonly lastEventType: ObservationType
+  readonly lastEventReceivedAt: string
+}
+
+export interface JournalFilter {
+  readonly sessionId?: string
+  readonly pageInstanceId?: string
+  readonly types?: readonly ObservationType[]
+}
+
 /** 门面接口：fs 实现的完整形状（host-main 直接注入 capture-protocol）。 */
 export interface SiftStore {
   appendObservation(envelope: ObservationEnvelope, payload: Uint8Array): Promise<StoreCommitResult>
@@ -67,6 +97,15 @@ export interface SiftStore {
   findObservationBySequence(pageInstanceId: string, sequence: number): Promise<ObservationRef | null>
   getSequenceHighWater(pageInstanceId: string): Promise<number | null>
   getPageWatermark(pageInstanceId: string): Promise<PageWatermark | null>
+  /** —— 读侧 API（UI/投影消费；两种打开模式都可用）—— */
+  listSessions(): Promise<readonly StoreSessionSummary[]>
+  listPages(filter?: { readonly sessionId?: string }): Promise<readonly StorePageSummary[]>
+  /** 按 journal 序返回过滤后的 envelope（快照在内存索引上，不重读文件）。 */
+  readJournal(filter?: JournalFilter): Promise<readonly ObservationEnvelope[]>
+  /** 读 blob 并重验 sha256；缺失/不符 → store_corrupt。 */
+  readBlob(payloadHash: string): Promise<Uint8Array>
+  /** 读 dom_snapshot payload 并过严格 schema；控制事件 hash → store_corrupt。 */
+  readSnapshotPayload(payloadHash: string): Promise<DomSnapshotPayload>
   close(): Promise<void>
 }
 
@@ -74,6 +113,12 @@ export interface OpenSiftStoreOptions {
   readonly rootDir: string
   /** 打开期恢复动作（断尾截断、page-state 重放补齐等）的诊断回调（宿主接 stderr）。 */
   readonly onRecover?: (message: string) => void
+  /**
+   * 只读打开（UI/投影侧）：跳过全部恢复性写动作（mkdir/staging 清理/断尾截断/
+   * page-state 对账补写/meta 刷新），journal 断尾在内存容忍，blob 读时惰性重验。
+   * host 是唯一写者（ADR-003）；读写共存依赖 Windows 共享读语义（dump-store 先例）。
+   */
+  readonly readOnly?: boolean
 }
 
 /** 默认 root：SIFT_STORE_ROOT 覆盖，否则 %LOCALAPPDATA%\Sift\store（退回 ~/.sift/store）。 */
@@ -88,7 +133,7 @@ export function defaultStoreRoot(): string {
 // —— 内部记账 ——
 
 interface OpenedIndex {
-  readonly rows: readonly ObservationEnvelope[]
+  readonly rows: ObservationEnvelope[]
   readonly byId: Map<string, string>
   readonly bySeq: Map<string, string>
   readonly highWater: Map<string, number>
@@ -110,10 +155,11 @@ function sha256Of(bytes: Uint8Array): string {
 
 // —— 打开：目录准备 + journal 扫描 + blob 校验 + page-state 对账 ——
 
-async function readJournal(
+async function loadJournal(
   journalPath: string,
-  onRecover?: (message: string) => void,
+  opts: { onRecover?: (message: string) => void; readOnly?: boolean } = {},
 ): Promise<ObservationEnvelope[]> {
+  const { onRecover, readOnly } = opts
   let buf: Buffer
   try {
     buf = await readFile(journalPath)
@@ -123,12 +169,17 @@ async function readJournal(
   }
   if (buf.length === 0) return []
 
-  // 断尾：末行无 '\n' 终结 = 写入中途崩溃 → 截断到最后一个完整行
+  // 断尾：末行无 '\n' 终结 = 写入中途崩溃。写者截断到最后一个完整行；
+  // 读者（readOnly，host 可能正在写）只在内存容忍——文件字节不动。
   if (buf[buf.length - 1] !== 0x0a) {
     const lastNl = buf.lastIndexOf(0x0a)
     const goodLen = lastNl === -1 ? 0 : lastNl + 1
-    await truncateFile(journalPath, goodLen)
-    onRecover?.(`journal 断尾截断：丢弃 ${buf.length - goodLen} 字节不完整尾部`)
+    if (readOnly === true) {
+      onRecover?.(`journal 断尾容忍（readOnly）：忽略 ${buf.length - goodLen} 字节不完整尾部`)
+    } else {
+      await truncateFile(journalPath, goodLen)
+      onRecover?.(`journal 断尾截断：丢弃 ${buf.length - goodLen} 字节不完整尾部`)
+    }
     buf = buf.subarray(0, goodLen)
   }
 
@@ -269,8 +320,9 @@ async function writePageStateAtomically(
 export class SiftFsStore implements SiftStore {
   private readonly root: string
   private readonly journalPath: string
-  private readonly journal: FileHandle
-  private readonly rows: readonly ObservationEnvelope[]
+  private readonly journal: FileHandle | null
+  private readonly readOnly: boolean
+  private readonly rows: ObservationEnvelope[]
   private readonly byId: Map<string, string>
   private readonly bySeq: Map<string, string>
   private readonly highWater: Map<string, number>
@@ -280,10 +332,16 @@ export class SiftFsStore implements SiftStore {
   private readonly pageStates: Map<string, PageStateDoc>
   private closed = false
 
-  private constructor(root: string, journal: FileHandle, index: OpenedIndex) {
+  private constructor(
+    root: string,
+    journal: FileHandle | null,
+    readOnly: boolean,
+    index: OpenedIndex,
+  ) {
     this.root = root
     this.journalPath = join(root, 'observations.jsonl')
     this.journal = journal
+    this.readOnly = readOnly
     this.rows = index.rows
     this.byId = index.byId
     this.bySeq = index.bySeq
@@ -295,20 +353,33 @@ export class SiftFsStore implements SiftStore {
   }
 
   static async open(opts: OpenSiftStoreOptions): Promise<SiftFsStore> {
-    const { rootDir, onRecover } = opts
-    const blobsDir = join(rootDir, 'blobs')
-    const statesDir = join(rootDir, 'page-states')
-    const stagingDir = join(rootDir, 'staging')
-    await mkdir(blobsDir, { recursive: true })
-    await mkdir(statesDir, { recursive: true })
-    await mkdir(stagingDir, { recursive: true })
-    // staging 孤儿回收（staging 写后崩溃的残留）
-    for (const name of await readdir(stagingDir)) {
-      await unlink(join(stagingDir, name))
+    const { rootDir, onRecover, readOnly = false } = opts
+
+    if (readOnly) {
+      // 读者：root 必须已存在（不创建、不触碰任何文件字节）
+      try {
+        await stat(rootDir)
+      } catch (error) {
+        throw new SiftStoreError('storage_error', `readOnly store 目录不存在: ${(error as NodeJS.ErrnoException).code ?? 'stat failed'}`)
+      }
+    } else {
+      const blobsDir = join(rootDir, 'blobs')
+      const statesDir = join(rootDir, 'page-states')
+      const stagingDir = join(rootDir, 'staging')
+      await mkdir(blobsDir, { recursive: true })
+      await mkdir(statesDir, { recursive: true })
+      await mkdir(stagingDir, { recursive: true })
+      // staging 孤儿回收（staging 写后崩溃的残留）
+      for (const name of await readdir(stagingDir)) {
+        await unlink(join(stagingDir, name))
+      }
     }
 
     const journalPath = join(rootDir, 'observations.jsonl')
-    const rows = await readJournal(journalPath, onRecover)
+    const rows = await loadJournal(journalPath, {
+      ...(onRecover !== undefined ? { onRecover } : {}),
+      readOnly,
+    })
 
     // 扫 journal 建幂等索引与引用计数
     const byId = new Map<string, string>()
@@ -336,17 +407,30 @@ export class SiftFsStore implements SiftStore {
       hashes.add(envelope.payloadHash)
     }
 
-    // 引用完整性：journal 引用的 blob 必须存在且 hash 相符
+    // 引用完整性：写者打开时全量校验；读者跳过（readBlob 读时惰性重验）
     const blobBytes = new Map<string, number>()
-    for (const hash of blobRefs.keys()) {
-      blobBytes.set(hash, await verifyBlob(rootDir, hash))
+    if (!readOnly) {
+      for (const hash of blobRefs.keys()) {
+        blobBytes.set(hash, await verifyBlob(rootDir, hash))
+      }
     }
 
-    const pageStates = await replayPageStates(rootDir, rows)
-    await reconcilePageStates(rootDir, pageStates, onRecover)
+    // page-state：journal 重放（纯计算，两种模式共用）；读者不复盘文件、不补写。
+    // 重放只读取已 rename 的 blob（rename 先于 journal append），正常崩溃窗口内安全；
+    // 读者侧 blob 缺失/不可读（外部篡改）归类为 store_corrupt。
+    let pageStates: Map<string, PageStateDoc>
+    try {
+      pageStates = await replayPageStates(rootDir, rows)
+    } catch (error) {
+      if (error instanceof SiftStoreError) throw error
+      throw corrupt(`page-state 重放失败（readOnly 打开）: ${(error as Error).message}`)
+    }
+    if (!readOnly) {
+      await reconcilePageStates(rootDir, pageStates, onRecover)
+    }
 
-    const journal = await open(journalPath, 'a')
-    const store = new SiftFsStore(rootDir, journal, {
+    const journal = readOnly ? null : await open(journalPath, 'a')
+    const store = new SiftFsStore(rootDir, journal, readOnly, {
       rows,
       byId,
       bySeq,
@@ -356,7 +440,9 @@ export class SiftFsStore implements SiftStore {
       sessionHashes,
       pageStates,
     })
-    await store.refreshMeta()
+    if (!readOnly) {
+      await store.refreshMeta()
+    }
     return store
   }
 
@@ -376,6 +462,7 @@ export class SiftFsStore implements SiftStore {
 
   /** meta.json 只是记账缓存：权威值每次打开时由 blob 目录 + journal 重算。 */
   private async refreshMeta(): Promise<void> {
+    if (this.readOnly) return
     const sessions: Record<string, number> = {}
     for (const sessionId of this.sessionHashes.keys()) {
       sessions[sessionId] = this.sessionBytes(sessionId)
@@ -399,6 +486,7 @@ export class SiftFsStore implements SiftStore {
     envelope: ObservationEnvelope,
     payload: Uint8Array,
   ): Promise<StoreCommitResult> {
+    if (this.readOnly) throw new SiftStoreError('storage_error', 'readOnly store 不支持写入')
     if (this.closed) throw new SiftStoreError('storage_error', 'store 已关闭')
 
     // 防御纵深：落盘路径/引用只接受协议字符集（协议层已校验，此处再核）
@@ -474,11 +562,13 @@ export class SiftFsStore implements SiftStore {
     }
 
     // journal append（fsync）——事实来源；此后崩溃都可恢复
+    if (this.journal === null) throw new SiftStoreError('storage_error', 'journal 未打开（readOnly）')
     const line = Buffer.from(`${JSON.stringify(envelope)}\n`, 'utf8')
     await this.journal.write(line)
     await this.journal.sync()
 
-    // 内存索引推进
+    // 内存索引推进（rows 同步追加：写者进程内读 API 不得是打开时刻的陈旧快照）
+    this.rows.push(envelope)
     this.byId.set(envelope.id, envelope.payloadHash)
     this.bySeq.set(`${envelope.pageInstanceId}#${envelope.sequence}`, envelope.payloadHash)
     this.highWater.set(
@@ -526,10 +616,115 @@ export class SiftFsStore implements SiftStore {
     return doc === undefined ? null : { stateVersion: doc.stateVersion, lastAppliedSequence: doc.lastAppliedSequence }
   }
 
+  // —— 读侧 API ——
+
+  async listSessions(): Promise<readonly StoreSessionSummary[]> {
+    const sessions = new Map<string, {
+      first: string
+      last: string
+      pages: string[]
+      pageCount: number
+      count: number
+    }>()
+    for (const row of this.rows) {
+      let s = sessions.get(row.sessionId)
+      if (s === undefined) {
+        s = { first: row.receivedAt, last: row.receivedAt, pages: [], pageCount: 0, count: 0 }
+        sessions.set(row.sessionId, s)
+      }
+      if (row.receivedAt < s.first) s.first = row.receivedAt
+      if (row.receivedAt > s.last) s.last = row.receivedAt
+      if (!s.pages.includes(row.pageInstanceId)) {
+        s.pages.push(row.pageInstanceId)
+        s.pageCount += 1
+      }
+      s.count += 1
+    }
+    return [...sessions.entries()].map(([sessionId, s]) => ({
+      sessionId,
+      firstReceivedAt: s.first,
+      lastReceivedAt: s.last,
+      pageInstanceIds: s.pages,
+      observationCount: s.count,
+    }))
+  }
+
+  async listPages(filter?: { readonly sessionId?: string }): Promise<readonly StorePageSummary[]> {
+    const sessionId = filter?.sessionId
+    // 首见序：pid → 首行（sessionId/tabId 以该页首行为准——page-state 不含会话归属）
+    const firstRow = new Map<string, ObservationEnvelope>()
+    for (const row of this.rows) {
+      if (!firstRow.has(row.pageInstanceId)) firstRow.set(row.pageInstanceId, row)
+    }
+    const out: StorePageSummary[] = []
+    for (const [pid, row] of firstRow) {
+      if (sessionId !== undefined && row.sessionId !== sessionId) continue
+      const doc = this.pageStates.get(pid)
+      out.push({
+        pageInstanceId: pid,
+        sessionId: row.sessionId,
+        tabId: row.tabId,
+        watermark: {
+          stateVersion: doc?.stateVersion ?? 0,
+          lastAppliedSequence: doc?.lastAppliedSequence ?? row.sequence,
+        },
+        canonicalUrl: doc?.canonicalUrl ?? row.url,
+        title: doc?.title ?? '',
+        snapshotBlobRef: doc?.sanitizedSnapshotBlobRef ?? '',
+        observationCount: doc?.observationCount ?? 1,
+        lastEventType: doc?.lastEventType ?? row.type,
+        lastEventReceivedAt: doc?.lastEventReceivedAt ?? row.receivedAt,
+      })
+    }
+    return out
+  }
+
+  async readJournal(filter?: JournalFilter): Promise<readonly ObservationEnvelope[]> {
+    if (filter === undefined) return [...this.rows]
+    return this.rows.filter((row) => {
+      if (filter.sessionId !== undefined && row.sessionId !== filter.sessionId) return false
+      if (filter.pageInstanceId !== undefined && row.pageInstanceId !== filter.pageInstanceId) return false
+      if (filter.types !== undefined && !filter.types.includes(row.type)) return false
+      return true
+    })
+  }
+
+  async readBlob(payloadHash: string): Promise<Uint8Array> {
+    if (!SHA256_HASH_PATTERN.test(payloadHash)) throw corrupt('payloadHash 形状非法')
+    const hex = blobHexOf(payloadHash)
+    let content: Buffer
+    try {
+      content = await readFile(join(this.root, 'blobs', hex.slice(0, 2), hex))
+    } catch {
+      throw corrupt(`blob 缺失: ${payloadHash.slice(0, 16)}…`)
+    }
+    if (sha256Of(content) !== payloadHash) {
+      throw corrupt(`blob 内容与 hash 不符: ${payloadHash.slice(0, 16)}…`)
+    }
+    return content
+  }
+
+  async readSnapshotPayload(payloadHash: string): Promise<DomSnapshotPayload> {
+    const bytes = await this.readBlob(payloadHash)
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(Buffer.from(bytes).toString('utf8'))
+    } catch {
+      throw corrupt(`snapshot payload 无法解析: ${payloadHash.slice(0, 16)}…`)
+    }
+    const result = domSnapshotPayloadSchema.safeParse(parsed)
+    if (!result.success) {
+      throw corrupt(`payload 不是合法 dom_snapshot: ${payloadHash.slice(0, 16)}…`)
+    }
+    return result.data
+  }
+
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
-    await this.journal.close()
+    if (this.journal !== null) {
+      await this.journal.close()
+    }
   }
 }
 

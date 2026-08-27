@@ -44,6 +44,8 @@ type CoverageManifest = {
   domains: string[]             // origin 列表（不含路径与 query）
   visitedPagination: VisitedPagination[]
   partialExtractionCount: number | null  // null = capture_failed 事件尚未持久化（见 §9）
+  // 批注（2026-08-27）：capture_failed 已持久化（§9 批注），Phase 3 起派生恒出 number；
+  // null 仅保留给历史语义（事件落地前的旧 journal）。
   authorizationGaps: Array<{
     origin: string
     from: string
