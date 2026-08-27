@@ -14,9 +14,26 @@
 // 因此：native-host 形态的启动参数到达本入口时，失败关闭（此路径永远不该被
 // 使用；manifest 指向 SiftHost.cmd）。UI 模式申请单实例锁，被占用则退出。
 //
-// UI stdout/stderr 无协议约束；host stdout 只允许长度前缀帧（host-main 的
-// runNativeHostLoop 是唯一出口），诊断一律走 stderr。
+// Phase 3：UI 从 spike 骨架窗升级为问答面板（P0_DEMO_SCOPE §5）。主进程 = IPC
+// 薄壳，全部逻辑在 qa-service（Electron 无关，qa-cli 同源消费）：
+//   - 渲染层零直接 fs/store 访问（sandbox:true、contextIsolation:true、
+//     nodeIntegration:false；唯一桥是 preload 暴露的类型化 invoke 包装）；
+//   - overview 5s 轮询 + 窗口 focus 刷新（readOnly store 开-读-关，与 host 写者共存）；
+//   - 确认屏在渲染层（预览即 buildProjection 的本地结果）；主进程只在她显式
+//     invoke askModel 后才触碰网络（验收门 9：确认前模型调用次数为零）。
 import { detectNativeHostLaunch } from '@sift/host/mode'
+import {
+  askModel,
+  buildProjectionForScope,
+  deleteAllStoreData,
+  deleteSessionStoreData,
+  getStoreOverview,
+  listAnswers,
+  parseScope,
+  resolveStoreRoot,
+} from './qa-service'
+import { loadModelConfig, modelConfigSummary } from '@sift/model'
+import type { QuestionProjection } from '@sift/shared'
 
 const isHost = detectNativeHostLaunch(process.argv.slice(1), {
   stdinIsTTY: process.stdin.isTTY === true,
@@ -30,7 +47,7 @@ if (isHost) {
   // UI 模式。动态 import：host 分支完全不触碰 Electron 运行时。
   void (async () => {
     try {
-      const { app, BrowserWindow } = await import('electron')
+      const { app, BrowserWindow, ipcMain } = await import('electron')
       const gotLock = app.requestSingleInstanceLock()
       if (!gotLock) {
         // 已有 UI 实例在运行；本实例直接退出（这不影响 host 模式——host 从不走此分支）。
@@ -39,20 +56,106 @@ if (isHost) {
         return
       }
       await app.whenReady()
+      const { join } = await import('node:path')
       const win = new BrowserWindow({
-        width: 480,
-        height: 320,
-        title: 'Sift AI (demo spike)',
+        width: 560,
+        height: 720,
+        title: 'Sift AI (demo)',
         useContentSize: true,
         show: true,
+        webPreferences: {
+          preload: join(app.getAppPath(), 'dist', 'ui', 'preload.js'),
+          sandbox: true,
+          contextIsolation: true,
+          nodeIntegration: false,
+        },
       })
       win.on('closed', () => app.quit())
-      // 骨架窗口：仅证明 UI 进程可运行；正式面板在步骤 3/4。
-      await win.loadURL('data:text/html,<title>Sift AI</title><h3>Sift demo spike</h3>')
+      await win.loadFile(join(app.getAppPath(), 'dist', 'ui', 'index.html'))
       process.stderr.write('[sift] UI mode ready\n')
+
+      // —— IPC 薄壳：结果一律 {ok,value}|{ok,message}，渲染层不因异常断线 ——
+
+      const rootDir = resolveStoreRoot()
+      const ok = <T>(value: T): { readonly ok: true; readonly value: T } => ({ ok: true, value })
+      const fail = (error: unknown): { readonly ok: false; readonly message: string } => ({
+        ok: false,
+        message: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      })
+
+      ipcMain.handle('sift:overview', () =>
+        getStoreOverview(rootDir).then(ok, fail))
+      ipcMain.handle('sift:build-projection', (_e, raw: unknown) => {
+        try {
+          const { scopeRaw, question } = raw as { scopeRaw: string; question: string }
+          const overview = getStoreOverview(rootDir) // scope 解析需要 latest-session
+          return overview.then(o => {
+            const latest = o.sessions.length > 0 ? o.sessions[o.sessions.length - 1]!.sessionId : undefined
+            const scope = parseScope(scopeRaw, latest)
+            if ('error' in scope) return Promise.resolve(ok({ status: 'scope_parse_error' as const, message: scope.error }))
+            return buildProjectionForScope(rootDir, scope, question, modelContextWindowOf()).then(result => ok(result), fail)
+          }, fail)
+        } catch (error) {
+          return Promise.resolve(fail(error))
+        }
+      })
+      ipcMain.handle('sift:ask-model', (_e, raw: unknown) => {
+        try {
+          const { projection } = raw as { projection: QuestionProjection }
+          const config = loadModelConfig(process.env)
+          if (config.status !== 'ok') {
+            return Promise.resolve(
+              ok({
+                status: 'model_unconfigured' as const,
+                missing: config.status === 'model_config_missing' ? config.missing : [],
+                reason: config.status === 'model_origin_rejected' ? config.reason : '',
+              }),
+            )
+          }
+          return askModel(rootDir, projection, config.config).then(result => {
+            if (result.status === 'failed') {
+              return ok({ status: 'failed' as const, code: result.result.code, message: result.result.message })
+            }
+            return ok({ status: 'ok' as const, answer: result.answer, answerPath: result.answerPath })
+          }, fail)
+        } catch (error) {
+          return Promise.resolve(fail(error))
+        }
+      })
+      ipcMain.handle('sift:list-answers', () => listAnswers(rootDir).then(ok, fail))
+      ipcMain.handle('sift:delete-session', (_e, raw: unknown) =>
+        deleteSessionStoreData(rootDir, (raw as { sessionId: string }).sessionId).then(ok, fail))
+      ipcMain.handle('sift:delete-all', () => deleteAllStoreData(rootDir).then(() => ok(undefined), fail))
+      ipcMain.handle('sift:model-config', () => Promise.resolve(ok(modelConfigSummary(loadModelConfig(process.env)))))
+
+      // —— 概览刷新：5s 轮询 + focus 即刻刷新 ——
+
+      let overviewTimer: NodeJS.Timeout | undefined
+      const pushOverviewTick = (): void => {
+        if (!win.isDestroyed()) win.webContents.send('sift:overview-updated')
+      }
+      const startPolling = (): void => {
+        overviewTimer = setInterval(pushOverviewTick, 5000)
+        overviewTimer.unref()
+      }
+      win.on('focus', pushOverviewTick)
+      startPolling()
+
+      app.on('second-instance', () => {
+        if (!win.isDestroyed()) {
+          if (win.isMinimized()) win.restore()
+          win.focus()
+        }
+      })
     } catch (error) {
       process.stderr.write(`[sift] UI mode failed: ${String(error)}\n`)
       process.exitCode = 1
     }
   })()
+}
+
+/** 投影限额用的模型 token 窗口：未配置时退回一个保守演示值（不阻塞预览）。 */
+function modelContextWindowOf(): number {
+  const config = loadModelConfig(process.env)
+  return config.status === 'ok' ? config.config.contextWindow : 32_768
 }

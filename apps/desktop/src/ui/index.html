@@ -1,0 +1,82 @@
+<!doctype html>
+<!-- Sift 问答面板（P0_DEMO_SCOPE §5 最小 Demo UI）。安全姿态：
+     CSP 只允许本包静态资源；无内联脚本/样式；渲染层文本一律 textContent（块文本
+     是不可信数据，绝不 innerHTML）。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'none'; connect-src 'none'">
+  <title>Sift AI</title>
+  <link rel="stylesheet" href="renderer.css">
+</head>
+<body>
+  <header>
+    <h1>Sift 问答</h1>
+    <p id="status" class="status">本地存储未连接</p>
+    <p id="store-meta" class="store-meta"></p>
+    <p id="model-meta" class="model-meta"></p>
+  </header>
+
+  <section id="scope-section">
+    <label for="scope-select">数据范围</label>
+    <select id="scope-select" size="1"></select>
+  </section>
+
+  <section id="question-section">
+    <label for="question-input">问题</label>
+    <textarea id="question-input" rows="3" placeholder="只依据已观察到的页面内容提问"></textarea>
+    <div class="presets">
+      <button type="button" class="preset" data-q="这个页面主要讲了什么？">这个页面主要讲了什么？</button>
+      <button type="button" class="preset" data-q="页面里提到了哪些数据或结论？">页面里提到了哪些数据或结论？</button>
+      <button type="button" class="preset" data-q="页面没有覆盖哪些内容（覆盖缺口）？">覆盖缺口是什么？</button>
+    </div>
+    <button type="button" id="build-button" disabled>生成问题投影（不发送）</button>
+  </section>
+
+  <section id="preview-section" hidden>
+    <h2>发送前确认</h2>
+    <p id="preview-stats" class="preview-stats"></p>
+    <p id="preview-model" class="preview-model"></p>
+    <details>
+      <summary>将发送的文本预览</summary>
+      <div id="preview-blocks" class="preview-blocks"></div>
+    </details>
+    <div class="confirm-row">
+      <button type="button" id="confirm-button">确认发送到模型</button>
+      <button type="button" id="cancel-button">取消</button>
+    </div>
+  </section>
+
+  <section id="answer-section" hidden>
+    <h2>回答</h2>
+    <div id="coverage-summary" class="coverage-summary"></div>
+    <p id="answer-text" class="answer-text"></p>
+    <details>
+      <summary>论断与引用（claims）</summary>
+      <div id="answer-claims"></div>
+    </details>
+    <details>
+      <summary>局限（limitations）</summary>
+      <div id="answer-limitations"></div>
+    </details>
+    <p id="answer-analyzer" class="answer-analyzer"></p>
+  </section>
+
+  <section id="answers-section">
+    <h2>历史答案</h2>
+    <div id="answers-list" class="answers-list"></div>
+  </section>
+
+  <section id="data-section">
+    <h2>数据控制</h2>
+    <p class="hint">删除仅在本机执行；host 正在写入时会诚实返回 store_busy，关闭已授权页面后重试。</p>
+    <div class="danger-row">
+      <button type="button" id="delete-session-button" disabled>删除所选范围 session 的本地数据</button>
+      <button type="button" id="delete-all-button">删除全部本地数据（含答案）</button>
+    </div>
+    <p id="delete-report" class="delete-report"></p>
+  </section>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
