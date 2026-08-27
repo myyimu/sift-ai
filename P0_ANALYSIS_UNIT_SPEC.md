@@ -137,7 +137,7 @@ type EvidenceBlob = {
 - `type` 由确定性程序判定，不由 LLM 生成；识别不确定时必须 `unknown`。
 - `url/title/author/publishedAt` 缺失时保持缺失，不由 AI 编造；title/author/publishedAt 属于每次 Observation 的 `SourceMetadataSnapshot`，不得用 CanonicalUnit 上的单值静默覆盖历史。页面只显示相对时间时保留原文或置信信息，不擅自推断绝对时间。
 - `confidence/extractionMode/captureExtent` 是本次抽取的事实，随 Observation 不可变；重算产生新观察，不改写旧的。
-- 聚合统计（observationCount、sessionCount、firstObservedAt、lastObservedAt）属于 Global Unit Index 的派生值，不是对象字段，不随观察冗余存储。
+- 聚合统计（observationCount、sessionCount、firstObservedAt、lastObservedAt、presence）属于 Global Unit Index 的派生值，不是对象字段，不随观察冗余存储。presence 的三态语义见 §7.1 与 `P0_COVERAGE_MANIFEST_SPEC.md` §6。
 - `evidenceBlocks` 至少包含一个有效块；空文本、纯导航和纯控件不构成 Unit。
 - "Unit 文本"不是存储字段，而是按 §11 的 extent-aware 规则从 EvidenceBlock 解引用 EvidenceBlob 后派生。
 
@@ -225,6 +225,25 @@ Global Unit Index
 - 同一 Session、同一 Page 实例上稳定指纹与 extent 未变化的重复抽取，不新增 UnitObservation；只追加一条幂等的 `UnitObservationSourceLink`。UnitObservation 本身永不改写。跨 Session/Page 或内容/extent 变化产生新观察。
 - DOM 出现只证明 `observed`；没有视口证据不得标记 `seen`。
 - 词表冻结：聚合计数使用 `observation_count`；`seen` 专指有真实 viewport exposure 证据，禁止 `seen_count` 之类的混用命名。
+
+### 7.1 UnitPresence（在场判定）
+
+Global Unit Index 为每个 CanonicalUnit 派生三态在场值（完整语义与展示规则以
+`P0_COVERAGE_MANIFEST_SPEC.md` §6 为准）：
+
+```ts
+type UnitPresence =
+  | { status: 'present'; asOf: string }
+  | { status: 'absent_last_snapshot'; asOf: string }
+  | { status: 'unobserved'; reason: 'grant_revoked' | 'page_closed' | 'session_ended'; since: string }
+```
+
+- 禁止布尔 `currentlyPresent`：布尔丢失"哪次快照"与"是否仍在观察"两个维度。
+- `absent_last_snapshot` 只表示最近一次已应用快照中不存在；删除/折叠/虚拟列表滚出/
+  权限变化在观察上不可区分，一律不得解读为"已删除"（本文件 §9 的可达性 GC 是唯一的
+  删除语义，且不由 DOM 缺席触发）。
+- 授权撤销、页面关闭或会话结束后只能 `unobserved`。
+- presence 不产生 UnitVersion，不参与 Topic 计数。
 
 ## 8. CanonicalUnit Merge
 

@@ -304,6 +304,9 @@ LLM 输出受 schema 约束的 JSON
 投影必须：
 
 - 带 `projectionVersion`、输入 `stateVersion`/sequence 范围和内容 hash；
+- 携带 CoverageManifest（覆盖声明：范围、计数口径、分页、授权空窗、已知盲区），
+  摘要在结果顶部渲染并进入模型上下文；无 manifest 的分析输出无效
+  （`P0_COVERAGE_MANIFEST_SPEC.md`）；
 - 保留每个 block 的来源引用，使回答可追溯；
 - 同一版本和配置产生确定性结果；
 - 可缓存，也可删除后重建；
@@ -317,6 +320,8 @@ QuestionProjection 与 AnswerProjection 的完整 schema、远程确认和失败
 ### 7.1 P0.5 TopicProjection
 
 本节不属于当前 Demo。进入 P0.5 后，TopicProjection 还必须：
+
+- 携带并渲染 CoverageManifest（Topic 结果的覆盖声明同样强制，无豁免类型）；
 
 - 冻结输入 `canonicalUnitId/evidenceBlockId/textHash` 集合，并只使用所选时间范围内存在观察的 CanonicalUnit；
 - 缓存键包含输入集合、normalization、schema/prompt、model 和 projection settings 版本；
@@ -420,6 +425,10 @@ P0.5 进入完整 Unit/Topic 阶段后再增加：
 - 不得把捕获文本差异直接等同于内容编辑；UnitVersion 只由两次可比较 full 观察的稳定内容差异产生。
 - 不得用 text hash、Page URL 或运行期 node id 合并 CanonicalUnit；身份键必须按 `P0_ANALYSIS_UNIT_SPEC.md` 的优先级解析并命名空间化。
 - 不得把 DerivedMetadata（type 等）变化写成 UnitVersion；解释版本与源版本必须分离，且不回写历史。
+- 不得让 LLM 生成或改写 CoverageManifest；覆盖声明只能从 Observation Log 与 Page State 确定性派生。
+- 不得把 scope 内样本表述为站点/版块整体，不得声明分页穷尽；覆盖表述以 CoverageManifest 为界。
+- 不得用布尔字段表达 Unit 在场状态；`absent_last_snapshot` 不得解读、暗示或展示为"已删除"。
+- 不得聚合不同 parsePolicy 的 ObservedMetric.parsedValue，不得把 rawText 直接当数值；聚合必须报告 parsed/total 覆盖率。
 - P0.5 不得改写 UnitObservation 来追加 source；使用 UnitObservationSourceLink。不得跨 Observation 复用 EvidenceBlock ownership；只允许复用 EvidenceBlob。
 - 不得把 feed/list 容器、任意 listitem、无法映射的 JSON-LD 或整个 Raw Page 直接包装成 Unit。
 - 父 Unit 不得包含已接受子 Unit 的 EvidenceBlock；一次抽取中的 block 必须独占。

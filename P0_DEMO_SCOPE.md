@@ -117,6 +117,7 @@ type QuestionProjection = {
     stateVersion: number
     lastAppliedSequence: number
   }>
+  coverage: CoverageManifest    // 见 P0_COVERAGE_MANIFEST_SPEC.md；摘要必须进入模型上下文
   blocks: DemoEvidenceBlock[]
   inputHash: string
   limits: {
@@ -165,6 +166,8 @@ type AnswerProjection = {
 ```
 
 本地验证器必须拒绝非法 JSON、未知 block ID、空引用、重复 ID、超长字段和 HTML/脚本输出。引用存在只证明结构有效，不自动证明语义蕴含；UI 必须标记回答为 AI 归纳，并提供原始 EvidenceBlock。Demo 通过人工夹具评估 claim 是否被引用证据支持。
+
+每次回答顶部必须渲染 CoverageManifest 摘要（`P0_COVERAGE_MANIFEST_SPEC.md` §5 的固定块）；`limitations` 不得与 manifest 矛盾。absent 语义（"最近一次观察中未见"）不得展示为"已删除"。
 
 问题超出 scope 时，模型必须返回 limitation；不得联网补充、调用浏览器或把预设问题当白名单。
 
@@ -240,6 +243,7 @@ Native Host 未连接
 12. 至少使用文章、列表、评论、代码、表格、SPA、恶意 prompt、表单和超大 DOM 夹具回归；
 13. Native Host 未运行、写盘失败、模型失败和空正文均显示真实错误，不伪造成功；
 14. 用户可以预览、暂停并删除当前 Page/Session 的本地数据和派生回答；
-15. 记录内部演示的回答耗时、来源点击率、引用支持率和用户主观节省时间。
+15. 记录内部演示的回答耗时、来源点击率、引用支持率和用户主观节省时间；
+16. 每次分析输出顶部渲染 CoverageManifest 摘要；无 manifest 的输出视为无效；任何输出不得把 scope 内样本表述为站点整体，不得把"最近观察中未见"表述为"已删除"（`P0_COVERAGE_MANIFEST_SPEC.md`）。
 
 通过这些门后，Demo 可以用于内部或少量受控用户验证；它仍不能作为支持登录态内容的公开产品发布。
