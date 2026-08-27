@@ -36,3 +36,4 @@ export {
   type PageStateGap,
   type SnapshotReplaceInfo,
 } from './page-state'
+export { deleteAllData, deleteSessionData, type SessionDeleteReport } from './maintenance'

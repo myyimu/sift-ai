@@ -129,3 +129,60 @@ export const coverageManifestSchema = z.object({
 }).strict()
 
 export type CoverageManifest = z.infer<typeof coverageManifestSchema>
+
+/**
+ * 盲区 reason → 展示文案（冻结映射；spec §5“文案可调，信息不得减”）。
+ * 4 个结构性盲区用 §5 模板原文；事件派生盲区逐条如实列出。
+ */
+const KNOWN_MISSING_LABELS: Readonly<Record<CoverageKnownMissingReason, string>> = {
+  unvisited_pagination: '没有访问的分页',
+  unmounted_infinite_scroll: '未挂载的无限滚动内容',
+  cross_origin_iframe: '跨域 iframe',
+  hidden_or_lazy_content: '隐藏或未渲染的内容',
+  editor_page_dropped: '存在被丢弃的编辑器/低内容页面',
+  oversized_page: '存在超过捕获上限的页面',
+  denied_sensitive_url: '存在被拒绝授权的敏感 URL',
+  authorization_gap: '观察时段内存在授权中断',
+  capture_failure: '存在捕获失败的页面（计数为下界）',
+  indistinguishable_absence: '隐藏、删除或无权限内容（观察上不可区分）',
+}
+
+/** 计数口径标签（spec §2 unitCountBasis：口径必须随结果输出）。 */
+const UNIT_COUNT_BASIS_LABELS: Readonly<Record<CoverageManifest['unitCountBasis'], string>> = {
+  deduped_text_blocks: '按内容去重块计',
+  canonical_units: '按内容单元计',
+}
+
+/**
+ * CoverageManifest 摘要的固定渲染（spec §5）：每次分析结果顶部必须展示，
+ * 同一文本进入模型上下文（使 limitations 有据可写）。纯函数、零墙钟；
+ * manifest 只含 origin/计数/时间，因此本摘要永不泄漏页面正文。
+ */
+export function renderCoverageSummary(manifest: CoverageManifest): string {
+  const lines: string[] = []
+  lines.push('基于当前选择的本地捕获范围：')
+  lines.push(`  ${manifest.unitCount} 个信息单元（${UNIT_COUNT_BASIS_LABELS[manifest.unitCountBasis]}）`)
+  lines.push(`  ${manifest.pageCount} 个页面 · ${manifest.domains.length} 个站点`)
+  for (const group of manifest.visitedPagination) {
+    lines.push(`  覆盖分页 ${group.path}：${formatSelectors(group.observedSelectors)}（未穷尽）`)
+  }
+  const hasTime = manifest.capturedFrom !== '' || manifest.capturedTo !== ''
+  lines.push(`  观察时段：${hasTime ? `${manifest.capturedFrom || '…'} ～ ${manifest.capturedTo || '…'}` : '无观察'}`)
+  lines.push('未覆盖：')
+  for (const reason of manifest.knownMissingReasons) {
+    lines.push(`  - ${KNOWN_MISSING_LABELS[reason]}`)
+  }
+  return lines.join('\n')
+}
+
+/** selector 组 → 展示串：全部以数字结尾时压成 min～max，否则按观察序原文并列。 */
+function formatSelectors(selectors: readonly string[]): string {
+  const numbers = selectors.map(s => /(\d+)$/.exec(s)?.[1])
+  if (numbers.every(n => n !== undefined)) {
+    const values = numbers.map(n => Number(n!))
+    const min = Math.min(...values)
+    const max = Math.max(...values)
+    return min === max ? String(min) : `${min}～${max}`
+  }
+  return selectors.join('、')
+}

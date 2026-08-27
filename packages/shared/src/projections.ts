@@ -60,10 +60,13 @@ export const answerProjectionSchema = z
       promptVersion: z.string().min(1),
     }),
   })
+  .strict()
   .superRefine((val, ctx) => {
     // P0_DEMO_SCOPE §2.5：问题超出 scope 时，模型必须返回 limitation——允许
     // claims 为空的 limitation-only 回答；但 claims 与 limitations 同时为空
     // 则既无可归因证据也无解释，整次失败。
+    // .strict()：本 schema 解析的是模型输出的不可信 JSON，未知键一律拒绝
+    // （与 @sift/model 手写 JSON Schema 的 additionalProperties:false 对齐）。
     if (val.claims.length === 0 && val.limitations.length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

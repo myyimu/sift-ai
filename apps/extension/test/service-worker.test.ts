@@ -51,7 +51,9 @@ function createChromeStub() {
   const actionClicked = makeRegistry<[{ id?: number; url?: string }]>()
   const tabsUpdated = makeRegistry<[number, { status?: string }]>()
   const tabsRemoved = makeRegistry<[number]>()
+  const commandsFired = makeRegistry<[string]>()
   const runtimeMessage = makeRegistry<[unknown, { tab?: { id?: number; url?: string }; origin?: string }, (r: unknown) => void]>()
+  let queryResult: Array<{ id?: number; url?: string }> = []
 
   // —— 脚本化 native port：对 SW 发来的每类消息即时应答，驱动传输到 commit_ack ——
 
@@ -105,6 +107,10 @@ function createChromeStub() {
     tabs: {
       onUpdated: tabsUpdated,
       onRemoved: tabsRemoved,
+      query: async () => queryResult,
+    },
+    commands: {
+      onCommand: commandsFired,
     },
     scripting: {
       executeScript: async (injection: { target: { tabId: number } }) => {
@@ -138,6 +144,13 @@ function createChromeStub() {
     sessionStore,
     setExecuteScriptMode: (mode: 'ok' | 'fail') => {
       executeScriptMode = mode
+    },
+    setActiveTab: (tab: { id?: number; url?: string } | undefined) => {
+      queryResult = tab === undefined ? [] : [tab]
+    },
+    pressCommand: async (name: string) => {
+      for (const cb of commandsFired.cbs) cb(name)
+      await tick()
     },
     clickAction: async (tab: { id?: number; url?: string }) => {
       for (const cb of actionClicked.cbs) cb(tab)
@@ -378,5 +391,46 @@ describe('service-worker 生命周期（mock chrome）', () => {
     await waitFor(() => announces(h).some(f => f.envelope.type === 'authorization_revoked'), 'authorization_revoked')
     expect(h.badges.get(7)).toBe('')
     expect(stateOf(h).tabs['7']).toBeUndefined()
+  })
+
+  // —— commands 手势（manifest commands：Alt+Shift+S，权限数组零变更） ——
+
+  it('grant command 手势 → 与 action 点击同一授权路径（granted + badge + state）', async () => {
+    h.setActiveTab({ id: 7, url: 'https://example.com/article?id=4' })
+    await h.pressCommand('sift-grant-current-tab')
+    await waitFor(() => announces(h).length >= 1, 'authorization_granted announce')
+
+    const frame = announces(h)[0]!
+    expect(frame.envelope.type).toBe('authorization_granted')
+    expect(frame.envelope.url).toBe('https://example.com/article?id=4')
+    const payload = payloadOf(h, frame.transferId)
+    expect(payload).toMatchObject({ kind: 'authorization_granted', reason: 'user_gesture', origin: 'https://example.com' })
+    expect(h.badges.get(7)).toBe('S')
+    expect(stateOf(h).tabs['7']).toMatchObject({ grantedOrigin: 'https://example.com' })
+    expect(h.connectedNames).toEqual([NATIVE_HOST_NAME])
+  })
+
+  it('command 时活动 tab 无 URL（devtools 窗口等）→ 失败关闭：无事件、无 grant', async () => {
+    h.setActiveTab({ id: 8 }) // url: undefined
+    await h.pressCommand('sift-grant-current-tab')
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(announces(h)).toHaveLength(0)
+    expect(stateOf(h)).toBeUndefined()
+  })
+
+  it('command 时活动 tab 为敏感 URL → 拒绝授权（与点击同一判定器）', async () => {
+    h.setActiveTab({ id: 9, url: 'chrome://settings' })
+    await h.pressCommand('sift-grant-current-tab')
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(announces(h)).toHaveLength(0)
+    expect(h.badges.get(9)).toBeUndefined()
+  })
+
+  it('未知 command 名 → 完全忽略', async () => {
+    h.setActiveTab({ id: 7, url: 'https://example.com/article?id=4' })
+    await h.pressCommand('some-other-command')
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(announces(h)).toHaveLength(0)
+    expect(h.executeScriptCalls).toHaveLength(0)
   })
 })

@@ -127,6 +127,25 @@ chrome.action.onClicked.addListener(tab => {
   void handleActionClick(tab).catch(error => console.warn('[sift] action click failed:', error))
 })
 
+// 键盘手势（manifest commands：Alt+Shift+S，2026-08-27 用户批准；权限数组零变更——
+// command 手势与 action 点击同样授予 activeTab）。查询当前活动 tab 后走同一授权路径；
+// 查询失败/tab 无 url → 失败关闭，仅告警不动作。
+const GRANT_COMMAND = 'sift-grant-current-tab'
+
+chrome.commands.onCommand.addListener(command => {
+  if (command !== GRANT_COMMAND) return
+  void handleGrantCommand().catch(error => console.warn('[sift] grant command failed:', error))
+})
+
+async function handleGrantCommand(): Promise<void> {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+  if (tab === undefined || tab.id === undefined || tab.url === undefined) {
+    console.warn('[sift] command 手势未找到带 URL 的活动页面，忽略')
+    return
+  }
+  await handleActionClick(tab)
+}
+
 async function handleActionClick(tab: chrome.tabs.Tab): Promise<void> {
   if (tab.id === undefined || tab.url === undefined) return
   const urlResult = sanitizeUrl(tab.url)

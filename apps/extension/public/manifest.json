@@ -15,6 +15,14 @@
     "nativeMessaging",
     "storage"
   ],
+  "commands": {
+    "sift-grant-current-tab": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "授权观察当前页面（与点击工具栏图标等价）"
+    }
+  },
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"
