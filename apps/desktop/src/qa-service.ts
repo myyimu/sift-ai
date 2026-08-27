@@ -205,7 +205,10 @@ export interface StoredAnswer {
   readonly completedAt: string
 }
 
-export type AskResult = { readonly status: 'ok'; readonly answer: StoredAnswer; readonly answerPath: string } | { readonly status: 'failed'; readonly result: ModelResult }
+/** ModelResult 的失败分支（askModel 失败时必属此形；收窄给 CLI/UI 直接取 code/message）。 */
+export type ModelFailed = Extract<ModelResult, { readonly status: 'failed' }>
+
+export type AskResult = { readonly status: 'ok'; readonly answer: StoredAnswer; readonly answerPath: string } | { readonly status: 'failed'; readonly result: ModelFailed }
 
 /**
  * 唯一的模型调用入口（确认屏之后才允许到达这里）。adapter 内部完成 zod+跨对象

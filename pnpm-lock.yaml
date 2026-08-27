@@ -32,6 +32,12 @@ importers:
       '@sift/host':
         specifier: workspace:*
         version: link:../../packages/host
+      '@sift/model':
+        specifier: workspace:*
+        version: link:../../packages/model
+      '@sift/projector':
+        specifier: workspace:*
+        version: link:../../packages/projector
       '@sift/shared':
         specifier: workspace:*
         version: link:../../packages/shared

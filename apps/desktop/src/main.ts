@@ -85,18 +85,16 @@ if (isHost) {
 
       ipcMain.handle('sift:overview', () =>
         getStoreOverview(rootDir).then(ok, fail))
-      ipcMain.handle('sift:build-projection', (_e, raw: unknown) => {
+      ipcMain.handle('sift:build-projection', async (_e, raw: unknown) => {
         try {
           const { scopeRaw, question } = raw as { scopeRaw: string; question: string }
-          const overview = getStoreOverview(rootDir) // scope 解析需要 latest-session
-          return overview.then(o => {
-            const latest = o.sessions.length > 0 ? o.sessions[o.sessions.length - 1]!.sessionId : undefined
-            const scope = parseScope(scopeRaw, latest)
-            if ('error' in scope) return Promise.resolve(ok({ status: 'scope_parse_error' as const, message: scope.error }))
-            return buildProjectionForScope(rootDir, scope, question, modelContextWindowOf()).then(result => ok(result), fail)
-          }, fail)
+          const overview = await getStoreOverview(rootDir) // scope 解析需要 latest-session
+          const latest = overview.sessions.length > 0 ? overview.sessions[overview.sessions.length - 1]!.sessionId : undefined
+          const scope = parseScope(scopeRaw, latest)
+          if ('error' in scope) return ok({ status: 'scope_parse_error' as const, message: scope.error })
+          return ok(await buildProjectionForScope(rootDir, scope, question, modelContextWindowOf()))
         } catch (error) {
-          return Promise.resolve(fail(error))
+          return fail(error)
         }
       })
       ipcMain.handle('sift:ask-model', (_e, raw: unknown) => {

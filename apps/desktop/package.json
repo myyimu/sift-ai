@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@sift/host": "workspace:*",
+    "@sift/model": "workspace:*",
+    "@sift/projector": "workspace:*",
     "@sift/shared": "workspace:*",
     "@sift/store": "workspace:*"
   },
