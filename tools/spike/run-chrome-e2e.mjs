@@ -289,14 +289,34 @@ function waitFor(predicate, timeoutMs, everyMs = 250) {
   })
 }
 
-/** UI 实例（同 run-e03-spike 语义：干净环境、等 stderr 就绪标志）。 */
-function startUi() {
+/** 阶段 A 前置：机器上不能已有 Sift 实例（残留实例持单实例锁会让 UI 轮误诊
+ * 为"12s 未就绪"；实测发生过）。 */
+function assertNoSiftRunning() {
+  const r = spawnSync('tasklist', ['/FI', 'IMAGENAME eq Sift.exe'], { encoding: 'utf8' })
+  if ((r.stdout || '').toLowerCase().includes('sift.exe')) {
+    throw new Error('检测到已在运行的 Sift.exe（会持有单实例锁）——请先 taskkill /F /IM Sift.exe 再跑 E2E')
+  }
+}
+
+/** UI 实例（同 run-e03-spike 语义：干净环境、等 stderr 就绪标志）。
+ * track：spawn 即登记——即使 12s 内未就绪，finally 也能回收（曾泄漏持锁实例）。 */
+function startUi(track) {
   return new Promise((res, rej) => {
     const child = spawn(SIFT_EXE, [], { env: CLEAN_ENV, stdio: ['ignore', 'ignore', 'pipe'] })
+    track(child)
     let ready = false
-    const timer = setTimeout(() => (ready ? res(child) : rej(new Error('UI not ready in 12s'))), 12000)
+    let tail = ''
+    const timer = setTimeout(() => {
+      if (ready) res(child)
+      else rej(new Error(`UI 12s 未就绪${tail ? `；stderr 尾部: ${tail}` : '（无输出）'}`))
+    }, 12000)
     child.stderr.on('data', (c) => {
-      if (String(c).includes('UI mode ready')) { ready = true; clearTimeout(timer); res(child) }
+      const s = String(c)
+      tail = (tail + s).slice(-300)
+      if (s.includes('UI mode ready')) { ready = true; clearTimeout(timer); res(child) }
+    })
+    child.on('exit', (code) => {
+      if (!ready) { clearTimeout(timer); rej(new Error(`UI 进程提前退出 code=${code}${tail ? `；stderr 尾部: ${tail}` : ''}`)) }
     })
     child.on('error', (e) => { clearTimeout(timer); rej(e) })
   })
@@ -312,6 +332,7 @@ async function main() {
     console.error(`Sift.exe 不存在: ${SIFT_EXE}（先 pnpm --filter @sift/desktop package:dir）`)
     process.exit(2)
   }
+  assertNoSiftRunning()
   const chromePath = args.chrome ?? (args.cft ? await ensureCft() : findChrome())
   const rounds = args.plumbing ? 1 : args.rounds
 
@@ -390,7 +411,7 @@ registry:   ${args.plumbing ? '不要求' : '必须已 register（见 tools/scri
     await waitFor(() => phaseDone.A !== undefined, rounds * 15000 + 90000, 500)
 
     // 阶段 B：拉起 UI 实例后置只读标志，SW 自行开始阶段 B。
-    ui = await startUi()
+    ui = await startUi((c) => { ui = c })
     console.log('  UI 实例已就绪（阶段 B）')
     state.phaseB = true
     await waitFor(() => phaseDone.B !== undefined, rounds * 15000 + 90000, 500)
@@ -403,12 +424,18 @@ registry:   ${args.plumbing ? '不要求' : '必须已 register（见 tools/scri
     const allOkA = a && a.okCount === a.rounds
     const allOkB = b && b.okCount === b.rounds
     if (args.plumbing) {
-      // plumbing 判定：收到扩展回报（Chrome 启动/加载/SW/报告通道/native 调用已触达），
-      // 且失败原因是"未注册"类——不宣称链路完成（ADR-002 限制 2）。
+      // plumbing 判定：收到扩展轮次回报即"链路触达"（Chrome 启动/加载/SW/报告通道/
+      // native 调用全部工作）。注册表未注册时每轮如期失败（预期路径）；已注册时
+      // 轮次直接成功——两种结果都是触达，只有零回报才是异常。
       const firstErr = phaseReports[0]?.error ?? '(无错误信息)'
-      const pass = phaseReports.length > 0 && !allOkA
-      console.log(`\n=== plumbing 自检: ${pass ? 'OK（链路触达，预期失败：' + firstErr + '）' : '异常（' + firstErr + '）'} ===`)
-      process.exitCode = pass ? 0 : 1
+      const touched = phaseReports.length > 0
+      const verdict = !touched
+        ? `异常（未收到任何轮次回报，${firstErr}）`
+        : allOkA && allOkB
+          ? 'OK（注册表已注册，链路完整往返成功）'
+          : `OK（链路触达，预期失败：${firstErr}）`
+      console.log(`\n=== plumbing 自检: ${verdict} ===`)
+      process.exitCode = touched ? 0 : 1
     } else {
       const pass = allOkA && allOkB
       console.log(`\n=== Chrome E2E 结论: ${pass ? 'PASS ✅' : 'FAIL ❌'} ===`)
@@ -419,9 +446,10 @@ registry:   ${args.plumbing ? '不要求' : '必须已 register（见 tools/scri
       process.exitCode = pass ? 0 : 1
     }
   } finally {
-    // 无论成败都回收：浏览器、UI、报告端点、临时目录。
+    // 无论成败都回收：浏览器、UI、报告端点、临时目录。UI 用 taskkill /T 树杀
+    // （child.kill() 只杀主进程，Electron 子进程可能残留并持有单实例锁）。
     try { chrome?.kill() } catch { /* already gone */ }
-    try { ui?.kill() } catch { /* already gone */ }
+    try { if (ui?.pid) spawnSync('taskkill', ['/F', '/T', '/PID', String(ui.pid)], { stdio: 'ignore' }) } catch { /* already gone */ }
     server.close()
     if (!args.keep) {
       try { rmSync(tmpRoot, { recursive: true, force: true }) } catch { /* Windows 句柄延迟；残留于 %TEMP% */ }

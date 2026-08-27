@@ -66,9 +66,9 @@ node tools/spike/run-chrome-e2e.mjs --cft               # 正式（前置：regi
   都不建）。一次性测试 profile 属标准做法；native host 由浏览器主进程 spawn（本就
   不在沙箱内），不影响被测链路。
 - `--plumbing`：验证 Chrome 启动/扩展加载/SW/报告通道/native 调用全链触达
-  （注册表未注册 -> 每轮失败并回报错误即通过条件）。
-  **2026-08-27 已通过**（exit 0，两阶段均回报
-  `Specified native messaging host not found.`——即预期的注册表缺失）。
+  （收到轮次回报即通过：注册表未注册 -> 每轮如期失败并回报；已注册 -> 直接
+  往返成功。两种结果都证明链路触达，零回报才是异常）。
+  **2026-08-27 已通过**。
 - 注册表：`tools/scripts/register-sift-native-host.mjs status|register|remove`
   （仅 HKCU + Chrome 键；**register 执行前需用户确认**）。
 
@@ -90,4 +90,7 @@ node tools/spike/run-chrome-e2e.mjs --cft               # 正式（前置：regi
 - **service worker 禁止 top-level await**：Chrome 直接 SyntaxError 杀死 SW 且
   外部零报错——SW 内的异步调度必须包进 `void (async () => {...})()`；
 - **Chrome 静默早退**：harness 只等扩展联系不监控进程退出时，会为死浏览器白等
-  5 分钟（run-chrome-e2e.mjs 现已挂 `exit` 监测快速失败）。
+  5 分钟（run-chrome-e2e.mjs 现已挂 `exit` 监测快速失败）；
+- **Sift.exe 残留实例持单实例锁**：会让 E2E 的 UI 轮误诊为"12s 未就绪"。harness
+  现已前置检查（检测到即中止并提示 taskkill），UI 回收改为 `taskkill /F /T`
+  树杀（`child.kill()` 只杀主进程，Electron 子进程可能残留）。
