@@ -43,7 +43,7 @@ node tools/spike/manual-roundtrip.mjs    # 单次真实 .cmd 链路诊断
 
 判定：两阶段全部轮次 ok 且单实例锁断言通过 -> PASS；任一失败 -> FAIL。
 
-## 真实 Chrome E2E（ADR-002，注册表确认后执行）
+## 真实 Chrome E2E（ADR-002；2026-08-27 已 PASS）
 
 `run-chrome-e2e.mjs`：临时测试扩展（与产品扩展同 manifest key -> 同 Extension ID，
 不触碰产品代码/权限）-> `chrome.runtime.connectNative` -> SiftHost.cmd -> host-main.js，
@@ -55,11 +55,20 @@ node tools/spike/run-chrome-e2e.mjs --cft --plumbing   # 管道自检（无需�
 node tools/spike/run-chrome-e2e.mjs --cft               # 正式（前置：register-sift-native-host.mjs register）
 ```
 
+正式结果（2026-08-27，CfT 151，100 轮/阶段）：**PASS**——阶段 A（UI 未运行）
+100/100，阶段 B（UI 运行中）100/100，往返延迟 p50=116ms p95=130ms max=305ms。
+
 - `--cft`：自动下载 Chrome for Testing（官方真实 Chrome 构建，支持 `--load-extension`；
   npmmirror 镜像，缓存于 `tools/.cache/cft`）。本机品牌 Chrome 151 已实测忽略
   `--load-extension`；不用 `--cft` 时 harness 会给出一次性手动 Load unpacked 指引。
+  CfT 启动强制附加 `--no-sandbox`：CfT 二进制未签名，本机安全软件注入会使 Win32
+  沙箱初始化失败——进程 ~400ms 内静默退出 code=3（无 stderr、profile 连 Default/
+  都不建）。一次性测试 profile 属标准做法；native host 由浏览器主进程 spawn（本就
+  不在沙箱内），不影响被测链路。
 - `--plumbing`：验证 Chrome 启动/扩展加载/SW/报告通道/native 调用全链触达
   （注册表未注册 -> 每轮失败并回报错误即通过条件）。
+  **2026-08-27 已通过**（exit 0，两阶段均回报
+  `Specified native messaging host not found.`——即预期的注册表缺失）。
 - 注册表：`tools/scripts/register-sift-native-host.mjs status|register|remove`
   （仅 HKCU + Chrome 键；**register 执行前需用户确认**）。
 
@@ -77,4 +86,8 @@ node tools/spike/run-chrome-e2e.mjs --cft               # 正式（前置：regi
 - IDE 文件监视器/预览可能锁住 `app.asar` 导致重打包失败——换输出目录绕过
   （`.vscode/settings.json` 已排除监视）；
 - **当前目录存在假 `cmd.exe`（如 0 字节残留文件）会让 Node spawn cmd.exe 全部
-  UNKNOWN 失败**（CreateProcess 先搜当前目录）——排障时优先检查。
+  UNKNOWN 失败**（CreateProcess 先搜当前目录）——排障时优先检查；
+- **service worker 禁止 top-level await**：Chrome 直接 SyntaxError 杀死 SW 且
+  外部零报错——SW 内的异步调度必须包进 `void (async () => {...})()`；
+- **Chrome 静默早退**：harness 只等扩展联系不监控进程退出时，会为死浏览器白等
+  5 分钟（run-chrome-e2e.mjs 现已挂 `exit` 监测快速失败）。

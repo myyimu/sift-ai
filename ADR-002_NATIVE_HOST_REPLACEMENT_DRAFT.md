@@ -111,12 +111,17 @@ node、以及 Chrome 对 bat 的引号/编码行为不可靠。本方案不冲�
 
 - [x] SiftHost.cmd 纳入 electron-builder extraFiles；
 - [x] ADR-001 E-03 章节批注（3 处：决策总表、§2 标题下、spike 段落后）；
-- [ ] 注册表注册/查询/回滚脚本已就绪（`tools/scripts/register-sift-native-host.mjs`，
-      仅 HKCU、Chrome 键、可 `status`/`remove`）——**执行 register 前需用户再次确认
-      （批准限制 1），尚未执行**；
-- [ ] 真实 Chrome E2E（`tools/spike/run-chrome-e2e.mjs`，临时测试扩展与产品扩展
-      同 key → 同 ID；单向报告协议；UI 开/关两态）——harness 已就绪，
-      **待注册表注册后执行；通过前不宣称 Native Messaging 全链路完成（批准限制 2）**。
+- [x] 注册表注册/查询/回滚脚本已就绪（`tools/scripts/register-sift-native-host.mjs`，
+      仅 HKCU、Chrome 键、可 `status`/`remove`）——**2026-08-27 用户确认后执行
+      register 并复核通过**（manifest 指向 pack2 `SiftHost.cmd`，origins 锁定
+      固定 Extension ID；回滚随时可用 `remove`）；
+- [x] 真实 Chrome E2E（`tools/spike/run-chrome-e2e.mjs`，临时测试扩展与产品扩展
+      同 key → 同 ID；单向报告协议；UI 开/关两态）——**2026-08-27 PASS（exit 0）**：
+      管道自检先行通过（CfT 151 + `--no-sandbox`，全链触达且如期回报
+      "host not found"）；正式运行 CfT 真实 Chrome，阶段 A（UI 未运行）100/100、
+      阶段 B（UI 运行中）100/100，往返延迟 p50=116ms p95=130ms max=305ms。
+      **至此 Native Messaging 全链路（Chrome 注册表发现 → SiftHost.cmd →
+      RUN_AS_NODE → host-main.js 帧往返）在真实浏览器下验证完成。**
 
 ## 6. 风险与缓解
 

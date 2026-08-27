@@ -219,15 +219,19 @@ async function runPhase(phase) {
 }
 
 // 内置调度：A -> 等 harness 置 /phase-b 标志（它先拉起 Sift UI 实例）-> B -> 停。
-for (;;) {
-  await runPhase('A')
+// 注意：service worker 禁止 top-level await（实测 Chrome 151 直接 SyntaxError
+// 杀死 SW，报告端点零联系），全部调度包进异步 IIFE。
+void (async () => {
   for (;;) {
-    if (await phaseBStarted()) break
-    await new Promise((r) => setTimeout(r, 1000))
+    await runPhase('A')
+    for (;;) {
+      if (await phaseBStarted()) break
+      await new Promise((r) => setTimeout(r, 1000))
+    }
+    await runPhase('B')
+    break
   }
-  await runPhase('B')
-  break
-}
+})()
 `)
   return extDir
 }
@@ -339,16 +343,25 @@ registry:   ${args.plumbing ? '不要求' : '必须已 register（见 tools/scri
       // 系统代理可能劫持 SW 对 127.0.0.1 的 fetch（且 report() 静默吞错），
       // 测试 profile 无外网需求，直接禁代理。
       '--no-proxy-server',
+      // CfT 二进制未签名，本机安全软件注入会导致 Win32 沙箱初始化失败：
+      // 进程 ~400ms 内静默退出 code=3（无 stderr、profile 连 Default/ 都不建）。
+      // 一次性测试 profile 用 --no-sandbox 是标准做法；native host 由浏览器
+      // 主进程 spawn（本就不在沙箱内），不影响被测链路。
+      ...(args.cft ? ['--no-sandbox'] : []),
       'about:blank',
     ], { env: CLEAN_ENV, stdio: ['ignore', 'ignore', 'pipe'] })
     console.log(`chrome pid: ${chrome.pid}`)
     // stderr 落盘诊断（--enable-logging=stderr 输出多；必须消费防管道塞满）。
     const logWs = createWriteStream(chromeLog)
     chrome.stderr.on('data', (d) => logWs.write(d))
+    // 进程早退监测：浏览器死了就没必要再等扩展联系（曾因此白等 5 分钟）。
+    const chromeDead = { dead: false, code: null }
+    chrome.on('exit', (code) => { chromeDead.dead = true; chromeDead.code = code })
 
     // SW 首次联系；品牌稳定版可能忽略 --load-extension -> 手动回退。
     try {
-      await waitFor(() => state.swFirstContact, 20000, 250)
+      await waitFor(() => state.swFirstContact || chromeDead.dead, 20000, 250)
+      if (chromeDead.dead) throw new Error(`Chrome 进程提前退出（code=${chromeDead.code}，日志 ${chromeLog}）`)
       console.log('扩展 SW 已联系报告端点。')
     } catch {
       console.log(`\n[!] 20s 内未收到扩展联系——本机 Chrome 可能忽略 --load-extension。
