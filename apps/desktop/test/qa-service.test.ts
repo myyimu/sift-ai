@@ -21,6 +21,7 @@ import {
   listAnswers,
   parseScope,
   deleteAllStoreData,
+  recordDemoMetric,
 } from '../src/qa-service'
 import type { ModelConfig } from '@sift/model'
 
@@ -52,14 +53,14 @@ function envelopeOf(over: Partial<ObservationEnvelope>): ObservationEnvelope {
   }
 }
 
-function snapPayload(html: string, url: string): Uint8Array {
+function snapPayload(html: string, url: string, title = '示例文章'): Uint8Array {
   return new TextEncoder().encode(JSON.stringify({
     schemaVersion: 1,
     kind: 'dom_snapshot',
     captureVersion: CAPTURE_VERSION,
     reason: 'initial_readable',
     url,
-    title: '示例文章',
+    title,
     contentEpoch: 0,
     html,
     stats: { nodeCount: 9, maxDepth: 5, htmlUtf8Bytes: html.length },
@@ -169,6 +170,21 @@ describe('getStoreOverview', () => {
     expect(spy).not.toHaveBeenCalled()
     spy.mockRestore()
   })
+
+  it('概览透传最近控制事件的 code/reason，供 UI 显示真实失败状态', async () => {
+    await seedTwoPages()
+    await append(
+      { id: 'a-2', pageInstanceId: 'page-a', sequence: 2, type: 'capture_failed' },
+      new TextEncoder().encode(JSON.stringify({ schemaVersion: 1, kind: 'capture_failed', captureVersion: CAPTURE_VERSION, code: 'capture_limit_exceeded', instanceNonce: 'nonce-a' })),
+    )
+    await writer!.close()
+    writer = null
+    const overview = await getStoreOverview(root)
+    expect(overview.pages.find(page => page.pageInstanceId === 'page-a')).toMatchObject({
+      lastEventType: 'capture_failed',
+      lastEventCode: 'capture_limit_exceeded',
+    })
+  })
 })
 
 describe('buildProjectionForScope', () => {
@@ -244,6 +260,49 @@ describe('buildProjectionForScope', () => {
     expect(result.projection.blocks[1]!.sources.map(s => s.stateVersion)).toEqual([2, 3]) // F1 见于 s-1/s-2
     expect(result.projection.blocks[3]!.sources.map(s => s.stateVersion)).toEqual([3, 4]) // F3 见于 s-2/s-3
     expect(result.projection.blocks[4]!.sources.map(s => s.stateVersion)).toEqual([4]) // F4 仅 s-3
+  })
+
+  it('SPA 软导航不跨 URL 合并（2026-08-28 URL 分组）：current_page 只含当前帖，session 含全部', async () => {
+    const A1 = '甲一楼：楼主给出了本地优先阅读记录的产品论证，认为观察数据应留在本机处理。'
+    const A2 = '甲二楼：回复者建议为阅读历史建立时间窗，以便按需回溯当天看过的内容。'
+    const A3 = '甲三楼：楼主补充说明虚拟化列表的滚动捕获边界与去重策略的取舍。'
+    const B1 = '乙一楼：另一个帖子的开场，讨论完全不同的主题——投影预算的标定方法。'
+    const B2 = '乙二楼：有人贴出了 600 块上限与 8k 预留之间的推导过程供大家检验。'
+    const snap = (heading: string, floors: string): string => doc(`<main><h1>${heading}</h1>${floors}</main>`)
+    await append({ id: 'x-0', pageInstanceId: 'page-spa', sequence: 0, type: 'authorization_granted' }, grantedPayload('https://example.com'))
+    // 帖子甲（URL /t/aaa/1/1，标题 帖子甲）
+    await append({ id: 'x-1', pageInstanceId: 'page-spa', sequence: 1, receivedAt: '2026-08-27T00:00:01.000Z' }, snapPayload(snap('帖子甲', `<p>${A1}</p><p>${A2}</p>`), 'https://example.com/t/aaa/1/1', '帖子甲'))
+    // 同帖滚动：URL 楼层号变化（/t/aaa/1/45），内容超集——同组，首见去重后并入
+    await append({ id: 'x-2', pageInstanceId: 'page-spa', sequence: 2, receivedAt: '2026-08-27T00:00:02.000Z' }, snapPayload(snap('帖子甲', `<p>${A1}</p><p>${A2}</p><p>${A3}</p>`), 'https://example.com/t/aaa/1/45', '帖子甲'))
+    // SPA 软导航换帖（同 pid、不同 URL、不同标题）
+    await append({ id: 'x-3', pageInstanceId: 'page-spa', sequence: 3, receivedAt: '2026-08-27T00:00:03.000Z' }, snapPayload(snap('帖子乙', `<p>${B1}</p><p>${B2}</p>`), 'https://example.com/t/bbb/2/1', '帖子乙'))
+    await writer!.close()
+    writer = null
+
+    const current = await buildProjectionForScope(root, { kind: 'current_page', pageInstanceId: 'page-spa' }, QUESTION, 128000)
+    expect(current.status).toBe('ok')
+    if (current.status === 'ok') {
+      const texts = current.projection.blocks.map(b => b.text)
+      expect(texts).toContain(B1) // 当前帖 = 帖子乙
+      expect(texts).toContain(B2)
+      expect(texts.some(t => t === A1 || t === A2 || t === A3)).toBe(false) // 前帖不混入
+      expect(current.preview.snapshots).toBe(1)
+      expect(current.projection.blocks.every(b => b.sources.every(s => s.safeUrl.startsWith('https://example.com/t/bbb')))).toBe(true)
+    }
+
+    const session = (await getStoreOverview(root)).sessions[0]!.sessionId
+    const all = await buildProjectionForScope(root, { kind: 'demo_session', sessionId: session }, QUESTION, 128000)
+    expect(all.status).toBe('ok')
+    if (all.status !== 'ok') return
+    const texts = all.projection.blocks.map(b => b.text)
+    expect(texts).toContain(A1)
+    expect(texts).toContain(A3) // 同组滚动史并入（甲的 45 楼快照）
+    expect(texts).toContain(B1)
+    expect(all.preview.snapshots).toBe(3)
+    expect(all.preview.pages).toBe(1) // 仍是一个 pid
+    // 甲一楼见于 x-1/x-2 两张快照（stateVersion 2/3；grant=1）
+    const a1 = all.projection.blocks.find(b => b.text === A1)!
+    expect(a1.sources.map(s => s.stateVersion)).toEqual([2, 3])
   })
 
   it('parseScope：page:/session:/latest-session 与错误分支', async () => {
@@ -333,5 +392,33 @@ describe('askModel + 答案持久化', () => {
     const report = await deletePageStoreData(root, 'page-a')
     expect(report.removedObservations).toBeGreaterThan(0)
     await expect(listAnswers(root)).resolves.toEqual([])
+  })
+})
+
+describe('Demo 评估指标', () => {
+  it('只写入受限 JSONL 事件，不接受正文或异常字段', async () => {
+    const inputHash = 'sha256:' + 'a'.repeat(64)
+    await recordDemoMetric(root, {
+      schemaVersion: 1,
+      type: 'answer_completed',
+      inputHash,
+      startedAt: '2026-08-28T00:00:00.000Z',
+      completedAt: '2026-08-28T00:00:01.000Z',
+      durationMs: 1000,
+      sourceCount: 2,
+      claimCount: 1,
+      leakedPageBody: '不应落盘',
+    })
+    await recordDemoMetric(root, {
+      schemaVersion: 1,
+      type: 'source_clicked',
+      inputHash,
+      evidenceBlockRef: 'b-0001',
+      at: '2026-08-28T00:00:02.000Z',
+    })
+    const metrics = JSON.parse((await readFile(join(answersDirOf(root), 'demo-metrics.jsonl'), 'utf8')).trim().split('\n')[0]!) as Record<string, unknown>
+    expect(metrics).toMatchObject({ schemaVersion: 1, inputHash, type: 'answer_completed' })
+    expect(metrics).not.toHaveProperty('leakedPageBody')
+    await expect(recordDemoMetric(root, { schemaVersion: 1, type: 'source_clicked', inputHash, evidenceBlockRef: '<script>', at: '2026-08-28T00:00:02.000Z' })).rejects.toThrow('无效')
   })
 })

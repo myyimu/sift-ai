@@ -15,7 +15,7 @@
 ## 1. 一次性准备
 
 ```bash
-pnpm install                                  # .npmrc 已配 Electron 镜像
+pnpm install                                  # 默认使用上游源；受限网络可用临时 env 配镜像
 pnpm build                                    # 扩展 -> apps/extension/dist
 pnpm build:desktop                            # 桌面双入口 -> apps/desktop/dist
 pnpm --filter @sift/desktop package:dir       # electron-builder --dir -> pack2/win-unpacked
@@ -207,7 +207,10 @@ E2E 用的 mock 端点见 `node tools/e2e/mock-openai.mjs --port 18789`）。
    analyzer 为本地盖章三元组（provider=端点 host、model=配置值、promptVersion=answer-v1）；
 4. 答案文件落 `<store>\..\answers\<inputHash>.json`（自包含 QuestionProjection +
    AnswerProjection，同 inputHash 覆盖 = 可重建语义）；UI "历史回答"列表可回看；
-5. 模型失败/校验失败：UI 显示"回答或引用校验失败"或"模型未配置"，本地捕获不受影响。
+5. 回答下方显示脱敏证据块和来源卡片；点击来源才由主进程重新执行 sensitive-v1 校验，
+   通过后打开原网页。每次回答、来源点击、claim 支持评分和主观节省时间写入
+   `<store>\..\answers\demo-metrics.jsonl`（只含 hash/ID/时间，不含网页正文）；
+6. 模型失败/校验失败：UI 显示"回答或引用校验失败"或"模型未配置"，本地捕获不受影响。
 
 命令行同路径：`node apps/desktop/dist/qa-cli.js --store-root <root> --scope latest-session
 --question "…" --out answer.json`（§1.1）。UI 按钮自动化不做——qa-service 即产品路径，
@@ -230,7 +233,7 @@ page-state/blob GC）与"删除全部数据"（含 answers 目录，两步确认
 | UI 删除数据报 `store_busy` | host 仍持 journal 句柄（页面还授权着）→ 关闭已授权页面后重试；这是诚实失败，不是 bug |
 | 授权后反复 `capture_too_little_content: 0 < 80`，页面明明"有内容" | 先分两种：① DOM 里确实无可读正文（97% 文本在 `<script>` 预载 JSON、列表未渲染——会话恢复的后台 tab 常见）→ 刷新 tab 再授权；② **广告 token 误杀**（2026-08-28 linux.do 实测已修复：Discourse welcome-banner 主题在 `<body>` 挂含 `banner` 的类，旧规则整树删除 body）。修复后结构性根元素豁免 + 大容器不剥（P0_DEMO_SCOPE §2.2 批注）；若再遇到，用确认屏诊断计数法上报 |
 | `capture_limit_exceeded: nodeCount`（信息流首页滚动后） | 去噪后 DOM 超过冻结上限 50,000 节点，失败关闭属设计行为（不存半张快照）；无限滚动的列表页 DOM 只增不减，滚多必超。上一个成功快照仍有效。demo 包络是文章型页面——Discourse 帖子页楼层有虚拟化、DOM 有界，不受影响；首页刷新后 DOM 重置可重新捕获 |
-| 预览里的快照数比页数多、块里含已滚过的内容 | 2026-08-28 起为**块级合并投影**（P0_DEMO_SCOPE §2.4 批注）：每页投影 = 该页全部已 commit 快照的首见并集（textHash 去重、sources 合并、按首见时间排序），滚动看过的楼层都在提问范围内——这是设计语义不是泄漏。代价：长帖全文累积可能超块数预算（同日修订 200→600，用户授权）→ 明确报"超出投影限额"（全量或不发送，不截断）；这是诚实失败，换个更短的阅读范围再问 |
+| 预览里的快照数比页数多、块里含已滚过的内容 | 2026-08-28 起为**块级合并投影**（P0_DEMO_SCOPE §2.4 批注）：每页投影 = 该页已 commit 快照的首见并集（textHash 去重、sources 合并、按首见时间排序），**且按 URL 分组**——SPA 软导航去过的不同帖子不互相合并，current_page 只含当前帖子（含其滚动史），其他帖子进 session scope。滚动看过的楼层都在提问范围内是设计语义不是泄漏。代价：长帖全文累积可能超块数预算（同日修订 200→600，用户授权）→ 明确报"超出投影限额"（全量或不发送，不截断）；这是诚实失败，换个更短的阅读范围再问 |
 
 ## 7. 文档索引
 

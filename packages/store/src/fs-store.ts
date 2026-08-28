@@ -81,6 +81,9 @@ export interface StorePageSummary {
   readonly snapshotBlobRef: string
   readonly observationCount: number
   readonly lastEventType: ObservationType
+  /** 最近控制事件的可渲染原因；不包含页面正文。 */
+  readonly lastEventCode?: string
+  readonly lastEventReason?: string
   readonly lastEventReceivedAt: string
 }
 
@@ -653,13 +656,17 @@ export class SiftFsStore implements SiftStore {
     const sessionId = filter?.sessionId
     // 首见序：pid → 首行（sessionId/tabId 以该页首行为准——page-state 不含会话归属）
     const firstRow = new Map<string, ObservationEnvelope>()
+    const lastRow = new Map<string, ObservationEnvelope>()
     for (const row of this.rows) {
       if (!firstRow.has(row.pageInstanceId)) firstRow.set(row.pageInstanceId, row)
+      const current = lastRow.get(row.pageInstanceId)
+      if (current === undefined || row.sequence > current.sequence) lastRow.set(row.pageInstanceId, row)
     }
     const out: StorePageSummary[] = []
     for (const [pid, row] of firstRow) {
       if (sessionId !== undefined && row.sessionId !== sessionId) continue
       const doc = this.pageStates.get(pid)
+      const status = await this.readEventStatus(lastRow.get(pid))
       out.push({
         pageInstanceId: pid,
         sessionId: row.sessionId,
@@ -673,10 +680,32 @@ export class SiftFsStore implements SiftStore {
         snapshotBlobRef: doc?.sanitizedSnapshotBlobRef ?? '',
         observationCount: doc?.observationCount ?? 1,
         lastEventType: doc?.lastEventType ?? row.type,
+        ...(status?.code === undefined ? {} : { lastEventCode: status.code }),
+        ...(status?.reason === undefined ? {} : { lastEventReason: status.reason }),
         lastEventReceivedAt: doc?.lastEventReceivedAt ?? row.receivedAt,
       })
     }
     return out
+  }
+
+  /** 只解析受协议约束的控制字段；读取失败时保留页面摘要，避免 UI 被诊断字段拖垮。 */
+  private async readEventStatus(envelope: ObservationEnvelope | undefined): Promise<{ code?: string; reason?: string } | null> {
+    if (envelope === undefined || (envelope.type !== 'capture_failed' && envelope.type !== 'authorization_revoked')) return null
+    let raw: Uint8Array
+    try {
+      raw = await this.readBlob(envelope.payloadHash)
+    } catch {
+      return null
+    }
+    try {
+      const parsed = JSON.parse(Buffer.from(raw).toString('utf8')) as { code?: unknown; reason?: unknown }
+      return {
+        ...(typeof parsed.code === 'string' ? { code: parsed.code } : {}),
+        ...(typeof parsed.reason === 'string' ? { reason: parsed.reason } : {}),
+      }
+    } catch {
+      return null
+    }
   }
 
   async readJournal(filter?: JournalFilter): Promise<readonly ObservationEnvelope[]> {

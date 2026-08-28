@@ -16,7 +16,7 @@
 import { detectNativeHostLaunch } from '@sift/host/mode'
 import { runNativeHostLoop } from '@sift/host/host-loop'
 import { createCaptureProtocolHandler } from '@sift/host/capture-protocol'
-import { defaultStoreRoot, openSiftStore, pruneExpiredData, type SiftFsStore } from '@sift/store'
+import { createNativeHostLease, defaultStoreRoot, openSiftStore, pruneExpiredData, type NativeHostLease, type SiftFsStore } from '@sift/store'
 import { mkdir } from 'node:fs/promises'
 
 // node 模式下 argv = [exe, host-main.js, origin, --parent-window=N]
@@ -32,6 +32,7 @@ if (!launchOk) {
 
 const rootDir = defaultStoreRoot()
 let store: SiftFsStore | null = null
+let lease: NativeHostLease | null = null
 try {
   // Host 是唯一捕获写者；在取得 journal 句柄前回收过期捕获，避免与自身并发。
   await mkdir(rootDir, { recursive: true })
@@ -46,6 +47,14 @@ try {
 }
 if (store === null) process.exit(1)
 
+try {
+  lease = await createNativeHostLease(rootDir)
+} catch (error) {
+  process.stderr.write(`[sift] host-main: status lease failed (fail closed): ${String(error)}\n`)
+  await store.close()
+  process.exit(1)
+}
+
 process.stderr.write(`[sift] host-main: capture protocol v1 loop, store at ${rootDir}\n`)
 
 const capture = createCaptureProtocolHandler({ store })
@@ -57,12 +66,14 @@ runNativeHostLoop({
   onFatal: (error) => {
     process.stderr.write(`[sift] host loop fatal: ${String(error)}\n`)
     process.exitCode = 1
+    void lease?.close()
     void store?.close()
   },
   onClosed: () => {
     // Chrome 断开（stdin end/close）：正常退出。
     process.stderr.write('[sift] host loop closed\n')
     process.exitCode = 0
+    void lease?.close()
     void store?.close()
   },
 })

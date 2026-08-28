@@ -13,7 +13,7 @@
 //
 // 本包保持纯：依赖 @sift/shared + linkedom + node:crypto，不依赖 @sift/store
 // （读侧事实由调用方从 store 读出后以值传入——桌面 UI 即此形态）。
-export { deriveCoverageManifest } from './manifest'
+export { deriveCoverageManifest, snapshotGroupKey } from './manifest'
 export type { ManifestInput, ManifestObservation, ManifestPageState } from './manifest'
 export { extractBlocks, normalizeBlockText, textHashOf } from './extract'
 export { projectQuestion } from './project'

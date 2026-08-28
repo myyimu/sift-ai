@@ -170,6 +170,19 @@ Demo 不做语义 Retrieval。选择算法固定为：
 > TOKEN_CTX_RESERVE=8k 兜底，600 × 12 ≈ 7.2k < 8k——估算保持诚实；此后 token 预算
 > `min(32,000, ctx−8,000)` 成为真正的物理约束（CJK 内容 ~800 块时先于块数触发）。
 > 防漂移守卫 `packages/shared/test/limits.test.ts` 同步。
+>
+> **再修订（同日，用户实测纠偏：合并按 URL 分组，不跨 URL 合并）**：合并投影落地后
+> 用户发现不同 URL 的快照被并进同一 current_page 投影。根因：**SPA 软导航
+> （pushState，无新 document）不换 pageInstanceId**（硬导航换 pid，见
+> P0_EXTENSION_ARCHITECTURE / SW `document_started` 分支），linux.do（Discourse）这类
+> SPA 从帖子 A 点进帖子 B，两帖楼层同 pid 落盘。修正：快照按 **分组键
+> `origin + 路径(剔尾部纯数字段) + query(剔分页参数) + title`**（`@sift/projector`
+> `snapshotGroupKey`）切组——尾部数字段是滚动楼层号（Discourse `/t/slug/123/45` →
+> `/t/slug/123/120`），剔除后单帖滚动史不碎裂；非数字尾段（不同文章 slug）与 title
+> 差异保持区分。**current_page 只取最新快照所在的组**（"现在看的这个帖子，含滚动
+> 史"）；同 pid 其他 URL 组只进 demo_session scope（"这段时间看过的所有内容"）。
+> 回归见 qa-service.test.ts "SPA 软导航不跨 URL 合并" 与 manifest.test.ts
+> snapshotGroupKey 用例。
 
 ### 2.5 AnswerProjection
 

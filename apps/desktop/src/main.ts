@@ -21,7 +21,7 @@
 //   - overview 5s 轮询 + 窗口 focus 刷新（readOnly store 开-读-关，与 host 写者共存）；
 //   - 确认屏在渲染层（预览即 buildProjection 的本地结果）；主进程只在她显式
 //     invoke askModel 后才触碰网络（验收门 9：确认前模型调用次数为零）。
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { detectNativeHostLaunch } from '@sift/host/mode'
 import {
   askModel,
@@ -33,10 +33,12 @@ import {
   listAnswers,
   parseScope,
   pruneExpiredAnswerFiles,
+  recordDemoMetric,
   resolveStoreRoot,
 } from './qa-service'
 import { loadModelConfig, modelConfigSummary } from '@sift/model'
 import type { QuestionProjection } from '@sift/shared'
+import { sanitizeUrl } from '@sift/shared'
 
 const isHost = detectNativeHostLaunch(process.argv.slice(1), {
   stdinIsTTY: process.stdin.isTTY === true,
@@ -121,6 +123,17 @@ if (isHost) {
           return fail(error)
         }
       })
+      ipcMain.handle('sift:open-source', async (_e, raw: unknown) => {
+        const url = typeof raw === 'object' && raw !== null && typeof (raw as { url?: unknown }).url === 'string'
+          ? (raw as { url: string }).url
+          : ''
+        const safe = sanitizeUrl(url)
+        if (safe.denied || safe.safeUrl === '') return fail(new Error('来源 URL 被隐私策略拒绝'))
+        await shell.openExternal(safe.safeUrl)
+        return ok(undefined)
+      })
+      ipcMain.handle('sift:record-demo-metric', (_e, raw: unknown) =>
+        recordDemoMetric(rootDir, raw).then(() => ok(undefined), fail))
       ipcMain.handle('sift:list-answers', () => listAnswers(rootDir).then(ok, fail))
       ipcMain.handle('sift:delete-session', (_e, raw: unknown) =>
         deleteSessionStoreData(rootDir, (raw as { sessionId: string }).sessionId).then(ok, fail))

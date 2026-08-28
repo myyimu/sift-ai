@@ -37,3 +37,10 @@ export {
   type SnapshotReplaceInfo,
 } from './page-state'
 export { deleteAllData, deletePageData, deleteSessionData, pruneExpiredData, type SessionDeleteReport } from './maintenance'
+export {
+  HOST_LEASE_TTL_MS,
+  createNativeHostLease,
+  getNativeHostStatus,
+  type NativeHostLease,
+  type NativeHostStatus,
+} from './host-status'

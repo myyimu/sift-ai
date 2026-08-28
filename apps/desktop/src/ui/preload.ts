@@ -2,7 +2,7 @@
 // 不暴露 ipcRenderer 本体、不暴露任何 Node/Electron 能力。渲染层拿到的数据全部
 // 经过主进程 qa-service（store 只读摘要 / 投影 / 答案），不含 API key。
 import { contextBridge, ipcRenderer } from 'electron'
-import type { StoreOverview, BuildProjectionResult, StoredAnswerSummary } from '../qa-service'
+import type { DemoMetricEvent, StoreOverview, BuildProjectionResult, StoredAnswerSummary } from '../qa-service'
 import type { ModelConfigSummary } from '@sift/model'
 import type { QuestionProjection } from '@sift/shared'
 
@@ -28,6 +28,8 @@ export interface SiftBridge {
   deletePage(pageInstanceId: string): Promise<IpcResult<{ removedObservations: number; removedPages: number; removedBlobs: number }>>
   deleteAll(): Promise<IpcResult<undefined>>
   modelConfig(): Promise<IpcResult<ModelConfigSummary>>
+  openSource(url: string): Promise<IpcResult<undefined>>
+  recordDemoMetric(event: DemoMetricEvent): Promise<IpcResult<undefined>>
   onOverviewUpdated(cb: () => void): void
 }
 
@@ -45,6 +47,8 @@ const bridge: SiftBridge = {
     ipcRenderer.invoke('sift:delete-page', { pageInstanceId }) as Promise<IpcResult<{ removedObservations: number; removedPages: number; removedBlobs: number }>>,
   deleteAll: () => ipcRenderer.invoke('sift:delete-all') as Promise<IpcResult<undefined>>,
   modelConfig: () => ipcRenderer.invoke('sift:model-config') as Promise<IpcResult<ModelConfigSummary>>,
+  openSource: url => ipcRenderer.invoke('sift:open-source', { url }) as Promise<IpcResult<undefined>>,
+  recordDemoMetric: event => ipcRenderer.invoke('sift:record-demo-metric', event) as Promise<IpcResult<undefined>>,
   onOverviewUpdated: cb => ipcRenderer.on('sift:overview-updated', () => cb()),
 }
 

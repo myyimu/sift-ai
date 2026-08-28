@@ -111,6 +111,28 @@ function paginationFactsOf(url: string): PaginationFacts | null {
   return null
 }
 
+// —— 快照分组键（P0_DEMO_SCOPE §2.4 批注：块级合并按 URL 组，不跨 URL 合并） ——
+// SPA 软导航（pushState，无新 document）不换 pageInstanceId，同一 pid 的快照可能来自
+// 不同 URL；合并投影按本键切组——current_page 只含最新快照所在组，跨 URL 的内容属于
+// session scope。键设计：尾部纯数字段是滚动位置/楼层号（Discourse /t/slug/123/45 →
+// /t/slug/123/120），剔除后滚动史不碎裂；非数字尾段（不同文章 slug）保持区分；数字
+// 章节（/guide/2 vs /guide/3）靠 title 兜底；分页 query 与 visitedPagination 同词表剔除。
+export function snapshotGroupKey(url: string, title: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return `raw|${url}|${title}`
+  }
+  const segments = parsed.pathname.split('/').filter(s => s !== '')
+  while (segments.length > 0 && /^\d+$/.test(segments[segments.length - 1]!)) segments.pop()
+  const kept = [...parsed.searchParams.entries()]
+    .filter(([key, value]) => !(PAGINATION_QUERY_KEYS.has(key.toLowerCase()) && /^\d+$/.test(value)))
+    .map(([key, value]) => `${key}=${value}`)
+    .sort()
+  return `${parsed.origin}/${segments.join('/')}${kept.length > 0 ? `?${kept.join('&')}` : ''}|${title}`
+}
+
 // —— 授权缺口（granted/revoked 按 tab 在 journal 序上配对） ——
 
 function reasonForGap(revokeReason: string): AuthorizationGap['reason'] | null {

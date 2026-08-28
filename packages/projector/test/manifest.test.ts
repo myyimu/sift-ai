@@ -1,7 +1,7 @@
 // deriveCoverageManifest 派生规则测试（P0_COVERAGE_MANIFEST_SPEC §3/§4）。
 // 全部确定性断言：同输入两次调用逐字节相同；无事实不虚构；观察者永不声明穷尽。
 import { describe, expect, it } from 'vitest'
-import { deriveCoverageManifest, type ManifestInput, type ManifestObservation, type ManifestPageState } from '../src/manifest'
+import { deriveCoverageManifest, snapshotGroupKey, type ManifestInput, type ManifestObservation, type ManifestPageState } from '../src/manifest'
 
 const SEQ_WATERMARK = 1000 // 足够大：默认不切（watermark 切面单独测）
 
@@ -365,5 +365,32 @@ describe('inputBounds', () => {
       { pageInstanceId: 'page-b', stateVersion: 2, lastAppliedSequence: 20 },
       { pageInstanceId: 'page-z', stateVersion: 9, lastAppliedSequence: 90 },
     ])
+  })
+})
+
+// —— snapshotGroupKey（2026-08-28 块级合并投影的 URL 分组键） ——
+describe('snapshotGroupKey：URL 分组（滚动史同组、跨 URL 分组）', () => {
+  it('尾部楼层号剔除：Discourse 滚动 URL 同组', () => {
+    const key = snapshotGroupKey('https://linux.do/t/topic-slug/123/45', '帖子甲')
+    expect(snapshotGroupKey('https://linux.do/t/topic-slug/123/120', '帖子甲')).toBe(key)
+    expect(snapshotGroupKey('https://linux.do/t/topic-slug/123', '帖子甲')).toBe(key) // 无楼层号的主题页
+  })
+
+  it('不同 slug / 不同 title 分组；数字章节靠 title 兜底', () => {
+    const a = snapshotGroupKey('https://linux.do/t/aaa/1/1', '帖子甲')
+    expect(snapshotGroupKey('https://linux.do/t/bbb/2/1', '帖子乙')).not.toBe(a)
+    // /guide/2 vs /guide/3 路径归一后会撞——title 区分数字章节
+    expect(snapshotGroupKey('https://x.com/guide/2', '第一章')).not.toBe(snapshotGroupKey('https://x.com/guide/3', '第二章'))
+    // 非数字尾段（文章 slug）不剔除
+    expect(snapshotGroupKey('https://x.com/a/post-1', 'T')).not.toBe(snapshotGroupKey('https://x.com/a/post-2', 'T'))
+  })
+
+  it('分页 query 剔除（与 visitedPagination 同词表）；其余 query 保留', () => {
+    expect(snapshotGroupKey('https://x.com/list?page=2', '列表')).toBe(snapshotGroupKey('https://x.com/list', '列表'))
+    expect(snapshotGroupKey('https://x.com/list?id=9', 'A')).not.toBe(snapshotGroupKey('https://x.com/list?id=8', 'A'))
+  })
+
+  it('非法 URL 退化为原文键（不抛异常）', () => {
+    expect(snapshotGroupKey('not-a-url', 'T')).toBe('raw|not-a-url|T')
   })
 })

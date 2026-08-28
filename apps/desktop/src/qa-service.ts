@@ -11,15 +11,16 @@
 //  - API key 只进内存 config，任何摘要/答案/日志都不含它（D-051）；
 //  - 答案持久化 = <storeRoot>/../answers/<inputHash>.json（自包含 QuestionProjection
 //    + AnswerProjection；同 inputHash 覆盖 = spec §2.3 "可删除、可重建"）。
-import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import type { AnswerProjection, ObservationEnvelope, QuestionProjection } from '@sift/shared'
+import type { AnswerProjection, DomSnapshotPayload, ObservationEnvelope, QuestionProjection } from '@sift/shared'
 import { TTL_DAYS } from '@sift/shared/limits'
 import { estimateTokens, utf8Bytes } from '@sift/shared/tokens'
-import { openSiftStore, defaultStoreRoot, type StorePageSummary, type StoreSessionSummary } from '@sift/store'
+import { defaultStoreRoot, getNativeHostStatus, openSiftStore, type NativeHostStatus, type StorePageSummary, type StoreSessionSummary } from '@sift/store'
 import { deleteAllData, deletePageData, deleteSessionData, type SessionDeleteReport } from '@sift/store'
 import {
   projectQuestion,
+  snapshotGroupKey,
   type ManifestFacts,
   type ManifestObservation,
   type ManifestPageState,
@@ -63,6 +64,7 @@ export function parseScope(raw: string, latestSessionId: string | undefined): Qa
 
 export interface StoreOverview {
   readonly storeRoot: string
+  readonly nativeHost: NativeHostStatus
   readonly sessions: readonly StoreSessionSummary[]
   readonly pages: readonly StorePageSummary[]
   readonly modelConfig: ModelConfigSummary
@@ -73,7 +75,13 @@ export async function getStoreOverview(rootDir: string, env: Record<string, stri
   const store = await openSiftStore({ rootDir, readOnly: true })
   try {
     const [sessions, pages] = [await store.listSessions(), await store.listPages()]
-    return { storeRoot: resolve(rootDir), sessions, pages, modelConfig: modelConfigSummary(loadModelConfig(env)) }
+    return {
+      storeRoot: resolve(rootDir),
+      nativeHost: await getNativeHostStatus(rootDir),
+      sessions,
+      pages,
+      modelConfig: modelConfigSummary(loadModelConfig(env)),
+    }
   } finally {
     await store.close()
   }
@@ -157,11 +165,14 @@ export async function buildProjectionForScope(
     }))
 
     // 页面输入：块级合并投影（2026-08-28，P0_DEMO_SCOPE §2.4 批注）。每页不再只喂
-    // Page State 的最新一张快照，而是喂该页 journal 里全部已 commit 快照的首见序列
-    //（相同 payloadHash 只取第一次出现——内容寻址 blob 天然去重）。projector 内全局
-    // textHash 去重合并 sources、块序按首见 capturedAt——效果 = 用户实际看过的内容
-    // 并集（滚动历史不丢），而非提问瞬间的最后一屏。逐快照 stateVersion 按 page-state
-    // reducer 同款语义走一遍 journal 推导（每应用一条 observation 自增，重放不增）。
+    // Page State 的最新一张快照，而是喂该页 journal 里已 commit 快照的首见序列
+    //（相同 payloadHash 只取第一次出现——内容寻址 blob 天然去重），**且按 URL 分组**：
+    // SPA 软导航（pushState 不换 document/pageInstanceId）去过的不同 URL 不互相合并——
+    // current_page 只取最新快照所在的组（"现在看的这个帖子，含滚动史"），session scope
+    // 含全部组（"这段时间看过的所有内容"）。组键见 @sift/projector snapshotGroupKey
+    //（尾部楼层号/分页参数剔除，滚动史不碎裂）。projector 内全局 textHash 去重合并
+    // sources、块序按首见 capturedAt；逐快照 stateVersion 按 page-state reducer 同款
+    // 语义走一遍 journal 推导（每应用一条 observation 自增，重放不增）。
     const rowsByPage = new Map<string, ObservationEnvelope[]>()
     for (const row of journal) {
       const list = rowsByPage.get(row.pageInstanceId)
@@ -182,17 +193,24 @@ export async function buildProjectionForScope(
           firstSeen.set(row.payloadHash, { stateVersion: version, receivedAt: row.receivedAt })
         }
       }
+      const entries: Array<{ key: string; payloadHash: string; payload: DomSnapshotPayload; stateVersion: number; receivedAt: string }> = []
       for (const [payloadHash, seen] of firstSeen) {
         const payload = await store.readSnapshotPayload(payloadHash)
+        entries.push({ key: snapshotGroupKey(payload.url, payload.title), payloadHash, payload, ...seen })
+      }
+      // current_page 组 = page-state 最新快照（snapshotBlobRef）所在的 URL 组
+      const currentKey = entries.find(e => e.payloadHash === page.snapshotBlobRef)?.key
+      const selected = scope.kind === 'current_page' ? entries.filter(e => e.key === currentKey) : entries
+      for (const entry of selected) {
         pageInputs.push({
-          sanitizedHtml: payload.html,
+          sanitizedHtml: entry.payload.html,
           source: {
             pageInstanceId: page.pageInstanceId,
-            stateVersion: seen.stateVersion,
+            stateVersion: entry.stateVersion,
             ordinal: 0,
-            ...(payload.title !== '' ? { title: payload.title } : {}),
-            safeUrl: payload.url,
-            capturedAt: seen.receivedAt,
+            ...(entry.payload.title !== '' ? { title: entry.payload.title } : {}),
+            safeUrl: entry.payload.url,
+            capturedAt: entry.receivedAt,
           },
         })
       }
@@ -235,6 +253,53 @@ export interface StoredAnswer {
   readonly questionProjection: QuestionProjection
   readonly answer: AnswerProjection
   readonly completedAt: string
+}
+
+/** 内部 Demo 评估事件：只保存 hash/ID/时间和人工评分，不保存网页正文。 */
+export type DemoMetricEvent =
+  | { readonly schemaVersion: 1; readonly type: 'answer_completed'; readonly inputHash: string; readonly startedAt: string; readonly completedAt: string; readonly durationMs: number; readonly sourceCount: number; readonly claimCount: number }
+  | { readonly schemaVersion: 1; readonly type: 'source_clicked'; readonly inputHash: string; readonly evidenceBlockRef: string; readonly at: string }
+  | { readonly schemaVersion: 1; readonly type: 'claim_support_rated'; readonly inputHash: string; readonly claimId: string; readonly rating: 'supported' | 'uncertain' | 'unsupported'; readonly at: string }
+  | { readonly schemaVersion: 1; readonly type: 'subjective_time_saved'; readonly inputHash: string; readonly minutes: number; readonly at: string }
+
+const DEMO_METRICS_FILE = 'demo-metrics.jsonl'
+const HASH_RE = /^sha256:[0-9a-f]{64}$/
+const ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
+
+function metricError(message: string): Error {
+  return new Error(`demo metric 无效：${message}`)
+}
+
+/** IPC 输入的终关卡；拒绝正文、路径和异常大数值，写入只读评估日志。 */
+export async function recordDemoMetric(rootDir: string, raw: unknown): Promise<void> {
+  if (typeof raw !== 'object' || raw === null) throw metricError('必须为对象')
+  const event = raw as Record<string, unknown>
+  if (event.schemaVersion !== 1 || typeof event.type !== 'string' || typeof event.inputHash !== 'string' || !HASH_RE.test(event.inputHash)) {
+    throw metricError('schemaVersion/type/inputHash 不合法')
+  }
+  let normalized: DemoMetricEvent
+  if (event.type === 'answer_completed') {
+    if (typeof event.startedAt !== 'string' || typeof event.completedAt !== 'string' || !Number.isFinite(Date.parse(event.startedAt)) || !Number.isFinite(Date.parse(event.completedAt))) throw metricError('时间不合法')
+    const { durationMs, sourceCount, claimCount } = event
+    if (typeof durationMs !== 'number' || !Number.isInteger(durationMs) || durationMs < 0 || durationMs > 86_400_000) throw metricError('durationMs 超界')
+    if (typeof sourceCount !== 'number' || !Number.isInteger(sourceCount) || sourceCount < 0 || sourceCount > 600) throw metricError('sourceCount 超界')
+    if (typeof claimCount !== 'number' || !Number.isInteger(claimCount) || claimCount < 0 || claimCount > 100) throw metricError('claimCount 超界')
+    normalized = { schemaVersion: 1, type: 'answer_completed', inputHash: event.inputHash, startedAt: event.startedAt, completedAt: event.completedAt, durationMs, sourceCount, claimCount }
+  } else if (event.type === 'source_clicked') {
+    if (typeof event.evidenceBlockRef !== 'string' || !ID_RE.test(event.evidenceBlockRef) || typeof event.at !== 'string' || !Number.isFinite(Date.parse(event.at))) throw metricError('source_clicked 字段不合法')
+    normalized = { schemaVersion: 1, type: 'source_clicked', inputHash: event.inputHash, evidenceBlockRef: event.evidenceBlockRef, at: event.at }
+  } else if (event.type === 'claim_support_rated') {
+    if (typeof event.claimId !== 'string' || !ID_RE.test(event.claimId) || !['supported', 'uncertain', 'unsupported'].includes(String(event.rating)) || typeof event.at !== 'string' || !Number.isFinite(Date.parse(event.at))) throw metricError('claim_support_rated 字段不合法')
+    normalized = { schemaVersion: 1, type: 'claim_support_rated', inputHash: event.inputHash, claimId: event.claimId, rating: event.rating as 'supported' | 'uncertain' | 'unsupported', at: event.at }
+  } else if (event.type === 'subjective_time_saved') {
+    if (typeof event.minutes !== 'number' || !Number.isFinite(event.minutes) || event.minutes < 0 || event.minutes > 10_000 || typeof event.at !== 'string' || !Number.isFinite(Date.parse(event.at))) throw metricError('subjective_time_saved 字段不合法')
+    normalized = { schemaVersion: 1, type: 'subjective_time_saved', inputHash: event.inputHash, minutes: event.minutes, at: event.at }
+  } else {
+    throw metricError('未知 type')
+  }
+  const dir = answersDirOf(rootDir)
+  await mkdir(dir, { recursive: true })
+  await appendFile(join(dir, DEMO_METRICS_FILE), `${JSON.stringify(normalized)}\n`, 'utf8')
 }
 
 /** ModelResult 的失败分支（askModel 失败时必属此形；收窄给 CLI/UI 直接取 code/message）。 */

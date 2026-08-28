@@ -14,7 +14,9 @@ h2 { font-size: 13px; margin: 14px 0 6px; color: #444c5e; }
 .status.ok { color: #10654a; }
 .status.busy { color: #8a6d00; }
 .status.err { color: #a1301f; }
-.store-meta, .model-meta, .answer-analyzer { margin: 2px 0 0; color: #5b6472; font-size: 12px; }
+.host-status, .store-meta, .model-meta, .answer-analyzer { margin: 2px 0 0; color: #5b6472; font-size: 12px; }
+.host-status.connected { color: #10654a; }
+.host-status.disconnected { color: #a1301f; }
 
 section { margin-bottom: 12px; }
 label { display: block; font-size: 12px; color: #444c5e; margin-bottom: 3px; }
@@ -69,10 +71,21 @@ button.danger { background: #fff; border-color: #a1301f; color: #a1301f; }
 #answer-claims, #answer-limitations { font-size: 12px; }
 .claim, .limitation, .answer-item { padding: 4px 0; border-bottom: 1px dashed #e7eaf0; }
 .claim .refs, .answer-item .meta { color: #7a8494; font-size: 11px; }
-.source-link { color: #2456c4; text-decoration: underline; cursor: pointer; }
+.answer-sources { margin: 8px 0; }
+.answer-source { border: 1px solid #dfe3ea; border-radius: 4px; background: #fff; padding: 7px 8px; margin: 5px 0; }
+.answer-source-text { white-space: pre-wrap; margin-bottom: 4px; }
+.answer-source-meta { color: #5b6472; font-size: 11px; }
+.source-link { color: #2456c4; text-decoration: underline; cursor: pointer; border: 0; background: transparent; padding: 0; font: inherit; }
+.source-link:hover, .source-link:focus { color: #163f98; }
 .answers-list { font-size: 12px; }
 .answers-list .empty { color: #7a8494; }
 
 .hint { font-size: 12px; color: #5b6472; margin: 4px 0; }
 .danger-row { display: flex; gap: 8px; }
 .delete-report { font-size: 12px; color: #10654a; min-height: 1em; margin: 6px 0 0; }
+.evaluation { border-top: 1px solid #e7eaf0; margin-top: 10px; padding-top: 8px; }
+.evaluation-row { display: flex; gap: 6px; }
+.evaluation-row input { width: 120px; font: inherit; border: 1px solid #c4cbd6; border-radius: 4px; padding: 4px 6px; }
+.evaluation-report { min-height: 1em; margin: 4px 0 0; color: #5b6472; font-size: 11px; }
+.claim-rating { display: flex; gap: 4px; margin-top: 4px; }
+.claim-rating button { font-size: 11px; padding: 2px 6px; }

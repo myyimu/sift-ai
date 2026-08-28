@@ -8,7 +8,7 @@ import './styles.css'
 import { renderCoverageSummary } from '@sift/shared'
 import type { QuestionProjection } from '@sift/shared'
 import type { AskModelIpc, IpcResult, SiftBridge } from './preload'
-import type { StoreOverview } from '../qa-service'
+import type { DemoMetricEvent, StoredAnswer, StoreOverview } from '../qa-service'
 
 declare const window: Window & { sift?: SiftBridge }
 
@@ -29,6 +29,7 @@ function $(id: string): HTMLElement {
 }
 
 const statusEl = $('status')
+const hostStatusEl = $('host-status')
 const storeMetaEl = $('store-meta')
 const modelMetaEl = $('model-meta')
 const scopeSelect = $('scope-select') as HTMLSelectElement
@@ -43,9 +44,13 @@ const cancelButton = $('cancel-button') as HTMLButtonElement
 const answerSection = $('answer-section')
 const coverageSummaryEl = $('coverage-summary')
 const answerTextEl = $('answer-text')
+const answerSourcesEl = $('answer-sources')
 const answerClaimsEl = $('answer-claims')
 const answerLimitationsEl = $('answer-limitations')
 const answerAnalyzerEl = $('answer-analyzer')
+const timeSavedInput = $('time-saved-input') as HTMLInputElement
+const timeSavedButton = $('time-saved-button') as HTMLButtonElement
+const evaluationReportEl = $('evaluation-report')
 const answersListEl = $('answers-list')
 const deleteSessionButton = $('delete-session-button') as HTMLButtonElement
 const deletePageButton = $('delete-page-button') as HTMLButtonElement
@@ -62,6 +67,7 @@ function setStatus(text: string, tone: Tone = 'busy'): void {
 
 let overview: StoreOverview | null = null
 let projection: QuestionProjection | null = null
+let activeEvaluation: { readonly inputHash: string; readonly startedAt: string } | null = null
 
 function shortUrl(url: string): string {
   return url.length > 58 ? `${url.slice(0, 55)}…` : url
@@ -97,15 +103,27 @@ async function refreshOverview(): Promise<void> {
     const status = latest?.lastEventType === 'capture_paused'
       ? ['观察已暂停', 'busy'] as const
       : latest?.lastEventType === 'capture_failed'
-        ? ['页面不受支持或超过 Demo 上限', 'err'] as const
+        ? latest.lastEventCode === 'capture_limit_exceeded'
+          ? ['页面超过 Demo 上限', 'err'] as const
+          : ['页面不受支持', 'err'] as const
         : latest?.lastEventType === 'authorization_revoked'
-          ? ['跨域后需要重新授权', 'err'] as const
+          ? latest.lastEventReason === 'cross_origin'
+            ? ['跨域后需要重新授权', 'err'] as const
+            : latest.lastEventReason === 'tab_closed'
+              ? ['页面已关闭，需要重新授权', 'err'] as const
+              : latest.lastEventReason === 'injection_failed'
+                ? ['注入失败，请重新授权', 'err'] as const
+                : ['观察连接已断开', 'err'] as const
           : latest?.lastEventType === 'document_started' || latest?.lastEventType === 'capture_resumed'
             ? ['正在捕获', 'busy'] as const
             : result.value.pages.length > 0
               ? ['已保存到本地', 'ok'] as const
               : ['未授权当前页面', 'busy'] as const
     setStatus(status[0], status[1])
+    hostStatusEl.textContent = result.value.nativeHost.connected
+      ? `Native Host 已连接（${result.value.nativeHost.activeLeases} 个进程）`
+      : 'Native Host 未连接'
+    hostStatusEl.className = `host-status ${result.value.nativeHost.connected ? 'connected' : 'disconnected'}`
     const last = latest?.lastEventReceivedAt ?? ''
     storeMetaEl.textContent = `${result.value.sessions.length} 个 session · ${result.value.pages.length} 个 page${last === '' ? '' : ` · 最近事件 ${last}`}`
     modelMetaEl.textContent = result.value.modelConfig.configured
@@ -131,6 +149,7 @@ function updateActionEnabled(): void {
 async function onBuild(): Promise<void> {
   if (questionInput.value.trim() === '' || scopeSelect.value === '') return
   setStatus('正在生成问题投影')
+  activeEvaluation = null
   const result = await bridge.buildProjection(scopeSelect.value, questionInput.value.trim())
   if (!result.ok) {
     setStatus('本地存储未连接', 'err')
@@ -191,6 +210,8 @@ async function onBuild(): Promise<void> {
 async function onConfirm(): Promise<void> {
   if (projection === null) return
   const current = projection
+  const startedAt = new Date().toISOString()
+  activeEvaluation = { inputHash: current.inputHash, startedAt }
   confirmButton.disabled = true
   buildButton.disabled = true
   setStatus('正在回答')
@@ -218,6 +239,7 @@ async function onConfirm(): Promise<void> {
   // 回答顶部恒渲染覆盖声明（验收门 16）：观察者不假装看过了全部内容
   coverageSummaryEl.textContent = renderCoverageSummary(current.coverage)
   answerTextEl.textContent = value.answer.answer.answer
+  renderAnswerSources(value.answer.answer, current)
   while (answerClaimsEl.firstChild !== null) answerClaimsEl.removeChild(answerClaimsEl.firstChild)
   for (const claim of value.answer.answer.claims) {
     const row = document.createElement('div')
@@ -227,7 +249,19 @@ async function onConfirm(): Promise<void> {
     const refs = document.createElement('div')
     refs.className = 'refs'
     refs.textContent = `证据：${claim.evidenceBlockRefs.join('、')}`
-    row.append(text, refs)
+    const rating = document.createElement('div')
+    rating.className = 'claim-rating'
+    for (const [label, ratingValue] of [['支持', 'supported'], ['不确定', 'uncertain'], ['不支持', 'unsupported']] as const) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.textContent = label
+      button.addEventListener('click', () => {
+        if (activeEvaluation === null) return
+        void recordMetric({ schemaVersion: 1, type: 'claim_support_rated', inputHash: activeEvaluation.inputHash, claimId: claim.claimId, rating: ratingValue, at: new Date().toISOString() })
+      })
+      rating.append(button)
+    }
+    row.append(text, refs, rating)
     answerClaimsEl.append(row)
   }
   while (answerLimitationsEl.firstChild !== null) answerLimitationsEl.removeChild(answerLimitationsEl.firstChild)
@@ -239,10 +273,71 @@ async function onConfirm(): Promise<void> {
   }
   answerAnalyzerEl.textContent = `analyzer：${value.answer.answer.analyzer.provider} · ${value.answer.answer.analyzer.model} · ${value.answer.answer.analyzer.promptVersion}（本地盖章）`
   answerSection.hidden = false
+  if (activeEvaluation !== null) {
+    await recordMetric({
+      schemaVersion: 1,
+      type: 'answer_completed',
+      inputHash: activeEvaluation.inputHash,
+      startedAt: activeEvaluation.startedAt,
+      completedAt: new Date().toISOString(),
+      durationMs: Math.max(0, Date.now() - Date.parse(activeEvaluation.startedAt)),
+      sourceCount: value.answer.answer.sources.length,
+      claimCount: value.answer.answer.claims.length,
+    })
+  }
   setStatus('已保存到本地', 'ok')
   previewSection.hidden = true
   projection = null
   await refreshAnswers()
+}
+
+async function recordMetric(event: DemoMetricEvent): Promise<void> {
+  const result = await bridge.recordDemoMetric(event)
+  if (!result.ok) evaluationReportEl.textContent = result.message
+}
+
+function renderAnswerSources(answer: StoredAnswer['answer'], current: QuestionProjection): void {
+  while (answerSourcesEl.firstChild !== null) answerSourcesEl.removeChild(answerSourcesEl.firstChild)
+  const byId = new Map(current.blocks.map(block => [block.id, block]))
+  const refs = [...new Set([
+    ...answer.sources.map(source => source.evidenceBlockRef),
+    ...answer.claims.flatMap(claim => claim.evidenceBlockRefs),
+  ])]
+  if (refs.length === 0) return
+  const heading = document.createElement('h3')
+  heading.textContent = '来源'
+  answerSourcesEl.append(heading)
+  for (const ref of refs) {
+    const block = byId.get(ref)
+    if (block === undefined) continue
+    const card = document.createElement('div')
+    card.className = 'answer-source'
+    const text = document.createElement('div')
+    text.className = 'answer-source-text'
+    text.textContent = block.text
+    card.append(text)
+    for (const source of block.sources) {
+      const meta = document.createElement('div')
+      meta.className = 'answer-source-meta'
+      const open = document.createElement('button')
+      open.type = 'button'
+      open.className = 'source-link'
+      open.textContent = `${source.title ?? '未命名页面'} · ${shortUrl(source.safeUrl)}`
+      open.addEventListener('click', () => {
+        void (async () => {
+          const opened = await bridge.openSource(source.safeUrl)
+          if (!opened.ok) {
+            evaluationReportEl.textContent = opened.message
+            return
+          }
+          if (activeEvaluation !== null) await recordMetric({ schemaVersion: 1, type: 'source_clicked', inputHash: activeEvaluation.inputHash, evidenceBlockRef: ref, at: new Date().toISOString() })
+        })()
+      })
+      meta.append(open)
+      card.append(meta)
+    }
+    answerSourcesEl.append(card)
+  }
 }
 
 // —— 历史答案 ——
@@ -317,6 +412,7 @@ async function onDeleteAll(): Promise<void> {
   answerSection.hidden = true
   previewSection.hidden = true
   projection = null
+  activeEvaluation = null
   await refreshOverview()
 }
 
@@ -327,11 +423,22 @@ confirmButton.addEventListener('click', () => void onConfirm())
 cancelButton.addEventListener('click', () => {
   previewSection.hidden = true
   projection = null
+  activeEvaluation = null
   void refreshOverview()
 })
 deleteSessionButton.addEventListener('click', () => void onDeleteSession())
 deletePageButton.addEventListener('click', () => void onDeletePage())
 deleteAllButton.addEventListener('click', () => void onDeleteAll())
+timeSavedButton.addEventListener('click', () => {
+  if (activeEvaluation === null) return
+  const minutes = Number(timeSavedInput.value)
+  if (!Number.isFinite(minutes) || minutes < 0 || minutes > 10_000) {
+    evaluationReportEl.textContent = '请输入 0 到 10000 之间的分钟数'
+    return
+  }
+  void recordMetric({ schemaVersion: 1, type: 'subjective_time_saved', inputHash: activeEvaluation.inputHash, minutes, at: new Date().toISOString() })
+  evaluationReportEl.textContent = '已记录主观节省时间'
+})
 questionInput.addEventListener('input', updateActionEnabled)
 scopeSelect.addEventListener('change', updateActionEnabled)
 for (const preset of Array.from(document.querySelectorAll<HTMLButtonElement>('.preset'))) {
