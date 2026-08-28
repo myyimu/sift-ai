@@ -216,6 +216,36 @@ describe('buildProjectionForScope', () => {
     expect(empty).toMatchObject({ status: 'projection_empty' })
   })
 
+  it('滚动历史块级合并（2026-08-28）：三张快照的并集去重、sources 合并、首见排序；同 payload 重捕不增快照数', async () => {
+    const FLOOR1 = '一楼：楼主提出了一个关于本地优先架构的问题，并给出了自己的初步方案。'
+    const FLOOR2 = '二楼：回复者指出方案在多设备同步上的缺陷，建议引入 CRDT。'
+    const FLOOR3 = '三楼：楼主补充说明了离线场景的取舍，认为冲突解决可以延后。'
+    const FLOOR4 = '四楼：新回复引用了二楼的观点，认为 CRDT 对演示场景过重。'
+    const snap = (floors: string): string => doc(`<main><h1>长帖标题</h1>${floors}</main>`)
+    await append({ id: 's-0', pageInstanceId: 'page-scroll', sequence: 0, type: 'authorization_granted' }, grantedPayload('https://example.com'))
+    // 视口 1（F1+F2）→ 视口 2（F1~F3，虚拟化下仍是部分 DOM）→ 视口 3（F3+F4）
+    await append({ id: 's-1', pageInstanceId: 'page-scroll', sequence: 1, receivedAt: '2026-08-27T00:00:01.000Z' }, snapPayload(snap(`<p>${FLOOR1}</p><p>${FLOOR2}</p>`), 'https://example.com/thread'))
+    await append({ id: 's-2', pageInstanceId: 'page-scroll', sequence: 2, receivedAt: '2026-08-27T00:00:02.000Z' }, snapPayload(snap(`<p>${FLOOR1}</p><p>${FLOOR2}</p><p>${FLOOR3}</p>`), 'https://example.com/thread'))
+    await append({ id: 's-3', pageInstanceId: 'page-scroll', sequence: 3, receivedAt: '2026-08-27T00:00:03.000Z' }, snapPayload(snap(`<p>${FLOOR3}</p><p>${FLOOR4}</p>`), 'https://example.com/thread'))
+    // 内容与 s-2 逐字节相同的重捕（相同 payload → 相同 hash）：distinct 快照数不增
+    await append({ id: 's-4', pageInstanceId: 'page-scroll', sequence: 4, receivedAt: '2026-08-27T00:00:04.000Z' }, snapPayload(snap(`<p>${FLOOR1}</p><p>${FLOOR2}</p><p>${FLOOR3}</p>`), 'https://example.com/thread'))
+    await writer!.close()
+    writer = null
+
+    const result = await buildProjectionForScope(root, { kind: 'current_page', pageInstanceId: 'page-scroll' }, QUESTION, 128000)
+
+    expect(result.status).toBe('ok')
+    if (result.status !== 'ok') return
+    expect(result.preview.pages).toBe(1)
+    expect(result.preview.snapshots).toBe(3) // s-4 与 s-2 同 payload，首见去重
+    // 块 = 标题 + 四层楼的并集，顺序 = 首见（阅读）顺序——旧语义下只会剩视口 3 的 F3+F4
+    expect(result.projection.blocks.map(b => b.text)).toEqual(['长帖标题', FLOOR1, FLOOR2, FLOOR3, FLOOR4])
+    // stateVersion 按 journal 重放推导（授权=1，s-1=2，s-2=3，s-3=4）；同块跨快照合并 sources
+    expect(result.projection.blocks[1]!.sources.map(s => s.stateVersion)).toEqual([2, 3]) // F1 见于 s-1/s-2
+    expect(result.projection.blocks[3]!.sources.map(s => s.stateVersion)).toEqual([3, 4]) // F3 见于 s-2/s-3
+    expect(result.projection.blocks[4]!.sources.map(s => s.stateVersion)).toEqual([4]) // F4 仅 s-3
+  })
+
   it('parseScope：page:/session:/latest-session 与错误分支', async () => {
     expect(parseScope('page:p-1', undefined)).toEqual({ kind: 'current_page', pageInstanceId: 'p-1' })
     expect(parseScope('session:s-1', undefined)).toEqual({ kind: 'demo_session', sessionId: 's-1' })

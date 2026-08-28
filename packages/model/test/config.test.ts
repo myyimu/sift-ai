@@ -43,11 +43,11 @@ describe('loadModelConfig', () => {
   })
 
   it('固定 basePath 允许（百炼等兼容端点）；query/userinfo/非法段仍拒', () => {
-    // 2026-08-28 放宽：允许静态 path（国内 OpenAI 兼容端点普遍带 /v1 或 /compatible-models/v1）
-    const bailian = loadModelConfig({ ...FULL_ENV, SIFT_MODEL_BASE_URL: 'https://dashscope.aliyuncs.com/compatible-models/v1' })
+    // 2026-08-28 放宽：允许静态 path（国内 OpenAI 兼容端点普遍带 /v1 或 /compatible-mode/v1）
+    const bailian = loadModelConfig({ ...FULL_ENV, SIFT_MODEL_BASE_URL: 'https://dashscope.aliyuncs.com/compatible-mode/v1' })
     expect(bailian.status).toBe('ok')
     if (bailian.status === 'ok') {
-      expect(bailian.config.baseUrl).toBe('https://dashscope.aliyuncs.com/compatible-models/v1')
+      expect(bailian.config.baseUrl).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1')
       expect(bailian.config.origin).toBe('https://dashscope.aliyuncs.com') // origin 字段保持纯 origin
     }
     // 尾斜杠规范化（避免拼出 //chat/completions）
@@ -68,11 +68,11 @@ describe('loadModelConfig', () => {
 describe('modelConfigSummary（UI 摘要，永不携带 apiKey）', () => {
   it('ok → configured + 完整 baseUrl/model/ctx（确认屏透明）', () => {
     const summary = modelConfigSummary(
-      loadModelConfig({ ...FULL_ENV, SIFT_MODEL_BASE_URL: 'https://dashscope.aliyuncs.com/compatible-models/v1' }),
+      loadModelConfig({ ...FULL_ENV, SIFT_MODEL_BASE_URL: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }),
     )
     expect(summary).toEqual({
       configured: true,
-      baseUrl: 'https://dashscope.aliyuncs.com/compatible-models/v1',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       model: 'gpt-x',
       contextWindow: 128_000,
     })

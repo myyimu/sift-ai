@@ -120,7 +120,7 @@ const validQuestionProjection = {
   coverage: validCoverage,
   blocks: [validBlock],
   inputHash: 'sha256:proj1',
-  limits: { maxPages: 20, maxBlocks: 200, maxUtf8Bytes: 524288, maxEstimatedTokens: 32000 },
+  limits: { maxPages: 20, maxBlocks: 600, maxUtf8Bytes: 524288, maxEstimatedTokens: 32000 },
   truncation: 'none',
 }
 

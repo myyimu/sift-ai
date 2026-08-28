@@ -34,7 +34,7 @@ node tools/scripts/register-sift-native-host.mjs register   # 写 HKCU + manifes
 
 | 变量 | 含义 | 示例 |
 |---|---|---|
-| `SIFT_MODEL_BASE_URL` | 端点 origin + 可选固定 basePath（https；仅 localhost/127.0.0.1/[::1] 允许 http；path 仅限字母/数字/`._~-` 静态段，禁 query/fragment/userinfo——2026-08-28 放宽，接百炼等国内兼容端点） | `https://api.example.com` 或 `https://dashscope.aliyuncs.com/compatible-models/v1` |
+| `SIFT_MODEL_BASE_URL` | 端点 origin + 可选固定 basePath（https；仅 localhost/127.0.0.1/[::1] 允许 http；path 仅限字母/数字/`._~-` 静态段，禁 query/fragment/userinfo——2026-08-28 放宽，接百炼等国内兼容端点） | `https://api.example.com` 或 `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | `SIFT_MODEL_API_KEY` | Bearer Key（仅环境，qa-cli 不接收 key 参数） | `sk-…` |
 | `SIFT_MODEL_ID` | 模型 ID | `gpt-4o-mini` / `qwen-plus` |
 | `SIFT_MODEL_CTX` | 上下文窗口 token 数（投影预算用） | `128000` |
@@ -45,7 +45,7 @@ node tools/scripts/register-sift-native-host.mjs register   # 写 HKCU + manifes
 
 ```powershell
 cd E:\sift-ai\apps\desktop\pack2\win-unpacked
-$env:SIFT_MODEL_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-models/v1'
+$env:SIFT_MODEL_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
 $env:SIFT_MODEL_API_KEY  = 'sk-你的百炼Key'     # 百炼控制台 API-KEY 页获取
 $env:SIFT_MODEL_ID       = 'qwen-plus'           # 或 qwen-max / qwen-turbo
 $env:SIFT_MODEL_CTX      = '128000'
@@ -112,7 +112,7 @@ manifest 的 path 指向 `pack2\win-unpacked\SiftHost.cmd`——重新打包到�
 |---|---|---|
 | 静态 | `pnpm lint` / `pnpm lint:ast` | 全仓 / 观察侧两层规则 |
 | 类型 | `pnpm typecheck` | 全部 workspace 包 |
-| 单元 | `pnpm test` | vitest（419 用例；具体数量以当前输出为准）。**必须从仓库根跑**：`pnpm -r test` 会因 eslint-sift-readonly 包的 root 配置找不到测试文件而误报失败 |
+| 单元 | `pnpm test` | vitest（426 用例；具体数量以当前输出为准）。**必须从仓库根跑**：`pnpm -r test` 会因 eslint-sift-readonly 包的 root 配置找不到测试文件而误报失败 |
 | 全链路（零 Chrome） | `pnpm vitest run apps/extension/test/e2e` | linkedom 夹具 → capture → transport → 真实 host-loop → 真实 FsStore 的 in-process 闭环（含全量重放去重） |
 | 模拟 Chrome spike | `node tools/spike/run-e03-spike.mjs` | UI 开/关两态各 100 次 connect/disconnect + 帧往返；`--rounds 10` 快速冒烟 |
 | 单链路诊断 | `node tools/spike/manual-roundtrip.mjs [--ui]` | 真实 `.cmd` 链路单次往返；`--ui` 先起 UI 实例 |
@@ -200,8 +200,8 @@ E2E 用的 mock 端点见 `node tools/e2e/mock-openai.mjs --port 18789`）。
 
 1. 启动 UI（§2.1，与捕获同一 store）：状态行应显示"已保存到本地"；
 2. scope 选目标页面/会话 → 输入问题（或点预设）→ **生成预览**：确认屏展示
-   Page/Block/字节/预计 Token、provider origin、model 与将发送文本预览——
-   **此时模型调用次数为零**（网络只发生在下一步确认之后）；
+   Page/快照数（含滚动历史）/Block/字节/预计 Token、provider baseUrl、model
+   与将发送文本预览——**此时模型调用次数为零**（网络只发生在下一步确认之后）；
 3. **确认发送** → 状态"正在回答"→ 回答顶部渲染 CoverageManifest 摘要（单元数/
    页面数/站点数/分页覆盖"未穷尽"/观察时段/未覆盖清单），claims 引用块 id，
    analyzer 为本地盖章三元组（provider=端点 host、model=配置值、promptVersion=answer-v1）；
@@ -228,6 +228,9 @@ page-state/blob GC）与"删除全部数据"（含 answers 目录，两步确认
 | 重打包报 app.asar 被锁 | IDE 监视器占用 → 换 `directories.output` 目录，或参照 `.vscode/settings.json` 排除监视 |
 | 全链 E2E 手势 15s×3 未授权 | SendKeys 焦点闪失（直接重跑 + `--keep`）或 `Alt+Shift+S` 被其他扩展占用（`chrome://extensions/shortcuts` 确认） |
 | UI 删除数据报 `store_busy` | host 仍持 journal 句柄（页面还授权着）→ 关闭已授权页面后重试；这是诚实失败，不是 bug |
+| 授权后反复 `capture_too_little_content: 0 < 80`，页面明明"有内容" | 先分两种：① DOM 里确实无可读正文（97% 文本在 `<script>` 预载 JSON、列表未渲染——会话恢复的后台 tab 常见）→ 刷新 tab 再授权；② **广告 token 误杀**（2026-08-28 linux.do 实测已修复：Discourse welcome-banner 主题在 `<body>` 挂含 `banner` 的类，旧规则整树删除 body）。修复后结构性根元素豁免 + 大容器不剥（P0_DEMO_SCOPE §2.2 批注）；若再遇到，用确认屏诊断计数法上报 |
+| `capture_limit_exceeded: nodeCount`（信息流首页滚动后） | 去噪后 DOM 超过冻结上限 50,000 节点，失败关闭属设计行为（不存半张快照）；无限滚动的列表页 DOM 只增不减，滚多必超。上一个成功快照仍有效。demo 包络是文章型页面——Discourse 帖子页楼层有虚拟化、DOM 有界，不受影响；首页刷新后 DOM 重置可重新捕获 |
+| 预览里的快照数比页数多、块里含已滚过的内容 | 2026-08-28 起为**块级合并投影**（P0_DEMO_SCOPE §2.4 批注）：每页投影 = 该页全部已 commit 快照的首见并集（textHash 去重、sources 合并、按首见时间排序），滚动看过的楼层都在提问范围内——这是设计语义不是泄漏。代价：长帖全文累积可能超块数预算（同日修订 200→600，用户授权）→ 明确报"超出投影限额"（全量或不发送，不截断）；这是诚实失败，换个更短的阅读范围再问 |
 
 ## 7. 文档索引
 

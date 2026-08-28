@@ -43,7 +43,12 @@ export const GLOBAL_QUOTA_BYTES = 1024 * 1024 * 1024
 
 // —— QuestionProjection 上限（P0_DEMO_SCOPE §2.4，“全量或不发送”） ——
 export const MAX_PAGES = 20
-export const MAX_BLOCKS = 200
+// 2026-08-28 修订（用户授权）：200 → 600。原 200 标定于"每页只投影最新一张快照"时代
+// （20 页 × ~10 块/页）；块级合并投影（P0_DEMO_SCOPE §2.4 批注）后单页阅读历史常态
+// 数百块，200 成为与字节/token 无关的人为瓶颈。600 的锚点：每块 prompt 头部
+// （[b-0123|kind] ≈ 10-12 token）不计入 estimateTokens，由 TOKEN_CTX_RESERVE=8k 兜底，
+// 600 × 12 ≈ 7.2k < 8k——估算保持诚实；CJK 内容 ~800 块时 token 预算先超，物理约束接管。
+export const MAX_BLOCKS = 600
 /** blocks 文本的 UTF-8 总字节上限。 */
 export const MAX_PROJECTION_UTF8_BYTES = 512 * 1024
 /** 预计输入 Token 硬上限。 */

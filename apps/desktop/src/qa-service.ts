@@ -13,7 +13,7 @@
 //    + AnswerProjection；同 inputHash 覆盖 = spec §2.3 "可删除、可重建"）。
 import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import type { AnswerProjection, QuestionProjection } from '@sift/shared'
+import type { AnswerProjection, ObservationEnvelope, QuestionProjection } from '@sift/shared'
 import { TTL_DAYS } from '@sift/shared/limits'
 import { estimateTokens, utf8Bytes } from '@sift/shared/tokens'
 import { openSiftStore, defaultStoreRoot, type StorePageSummary, type StoreSessionSummary } from '@sift/store'
@@ -83,6 +83,8 @@ export async function getStoreOverview(rootDir: string, env: Record<string, stri
 
 export interface ProjectionPreview {
   readonly pages: number
+  /** 参与合并的快照份数（distinct payload；同一页滚动历史的多张快照都在内）。 */
+  readonly snapshots: number
   readonly blocks: number
   readonly utf8Bytes: number
   readonly estimatedTokens: number
@@ -154,23 +156,46 @@ export async function buildProjectionForScope(
       canonicalUrl: p.canonicalUrl,
     }))
 
-    // 页面输入：冻结 Page State 的 canonical 快照（已脱敏 html；每页一份，ordinal=0）
+    // 页面输入：块级合并投影（2026-08-28，P0_DEMO_SCOPE §2.4 批注）。每页不再只喂
+    // Page State 的最新一张快照，而是喂该页 journal 里全部已 commit 快照的首见序列
+    //（相同 payloadHash 只取第一次出现——内容寻址 blob 天然去重）。projector 内全局
+    // textHash 去重合并 sources、块序按首见 capturedAt——效果 = 用户实际看过的内容
+    // 并集（滚动历史不丢），而非提问瞬间的最后一屏。逐快照 stateVersion 按 page-state
+    // reducer 同款语义走一遍 journal 推导（每应用一条 observation 自增，重放不增）。
+    const rowsByPage = new Map<string, ObservationEnvelope[]>()
+    for (const row of journal) {
+      const list = rowsByPage.get(row.pageInstanceId)
+      if (list !== undefined) list.push(row)
+      else rowsByPage.set(row.pageInstanceId, [row])
+    }
     const pageInputs: ProjectorPageInput[] = []
     for (const page of pages) {
       if (page.snapshotBlobRef === '') continue // 尚无快照的页：无证据可投影
-      const payload = await store.readSnapshotPayload(page.snapshotBlobRef)
-      const snapRow = journal.find(r => r.type === 'dom_snapshot' && r.payloadHash === page.snapshotBlobRef)
-      pageInputs.push({
-        sanitizedHtml: payload.html,
-        source: {
-          pageInstanceId: page.pageInstanceId,
-          stateVersion: page.watermark.stateVersion,
-          ordinal: 0,
-          ...(payload.title !== '' ? { title: payload.title } : {}),
-          safeUrl: payload.url,
-          capturedAt: snapRow?.receivedAt ?? page.lastEventReceivedAt,
-        },
-      })
+      let lastApplied = -1 // 首行无条件应用（reducePageState 的 prev===null 分支）
+      let version = 0
+      const firstSeen = new Map<string, { stateVersion: number; receivedAt: string }>()
+      for (const row of rowsByPage.get(page.pageInstanceId) ?? []) {
+        if (row.sequence <= lastApplied) continue // 幂等重放不增版本（reducePageState 同款）
+        version += 1
+        lastApplied = row.sequence
+        if (row.type === 'dom_snapshot' && !firstSeen.has(row.payloadHash)) {
+          firstSeen.set(row.payloadHash, { stateVersion: version, receivedAt: row.receivedAt })
+        }
+      }
+      for (const [payloadHash, seen] of firstSeen) {
+        const payload = await store.readSnapshotPayload(payloadHash)
+        pageInputs.push({
+          sanitizedHtml: payload.html,
+          source: {
+            pageInstanceId: page.pageInstanceId,
+            stateVersion: seen.stateVersion,
+            ordinal: 0,
+            ...(payload.title !== '' ? { title: payload.title } : {}),
+            safeUrl: payload.url,
+            capturedAt: seen.receivedAt,
+          },
+        })
+      }
     }
     if (pageInputs.length === 0) return { status: 'projection_empty' }
 
@@ -183,7 +208,13 @@ export async function buildProjectionForScope(
       return {
         status: 'ok',
         projection: result.projection,
-        preview: { pages: pageInputs.length, blocks: result.projection.blocks.length, utf8Bytes: totalUtf8Bytes, estimatedTokens },
+        preview: {
+          pages: new Set(pageInputs.map(p => p.source.pageInstanceId)).size,
+          snapshots: pageInputs.length,
+          blocks: result.projection.blocks.length,
+          utf8Bytes: totalUtf8Bytes,
+          estimatedTokens,
+        },
       }
     }
     return result

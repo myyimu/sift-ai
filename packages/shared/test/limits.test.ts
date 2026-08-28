@@ -42,9 +42,9 @@ describe('frozen demo limits', () => {
     expect(GLOBAL_QUOTA_BYTES).toBe(1024 * 1024 * 1024)
   })
 
-  it('projection 上限', () => {
+  it('projection 上限（2026-08-28 修订：MAX_BLOCKS 200→600，用户授权，见 P0_DEMO_SCOPE §2.4 批注）', () => {
     expect(MAX_PAGES).toBe(20)
-    expect(MAX_BLOCKS).toBe(200)
+    expect(MAX_BLOCKS).toBe(600)
     expect(MAX_PROJECTION_UTF8_BYTES).toBe(512 * 1024)
     expect(TOKEN_LIMIT_CAP).toBe(32_000)
     expect(TOKEN_CTX_RESERVE).toBe(8_000)

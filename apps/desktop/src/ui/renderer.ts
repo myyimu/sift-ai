@@ -152,14 +152,14 @@ async function onBuild(): Promise<void> {
   }
   if (value.status === 'projection_limit_exceeded') {
     setStatus(
-      `超出投影限额（pages=${value.usage.pages}/${value.limits.maxPages} · blocks=${value.usage.blocks}/${value.limits.maxBlocks} · bytes=${value.usage.utf8Bytes}/${value.limits.maxUtf8Bytes} · tokens≈${value.usage.estimatedTokens}/${value.limits.maxEstimatedTokens}）——全量或不发送，请缩小 scope`,
+      `超出投影限额（pages=${value.usage.pages}/${value.limits.maxPages} · blocks=${value.usage.blocks}/${value.limits.maxBlocks} · bytes=${value.usage.utf8Bytes}/${value.limits.maxUtf8Bytes} · tokens≈${value.usage.estimatedTokens}/${value.limits.maxEstimatedTokens}）——全量或不发送，请缩小 scope 或减少阅读历史（单页时可删除本页数据后重新阅读再问）`,
       'err',
     )
     return
   }
 
   projection = value.projection
-  previewStatsEl.textContent = `将发送：${value.preview.pages} 页 · ${value.preview.blocks} 块 · ${value.preview.utf8Bytes} 字节 · ≈${value.preview.estimatedTokens} tokens · 全量不截断`
+  previewStatsEl.textContent = `将发送：${value.preview.pages} 页 · ${value.preview.snapshots} 张快照（含滚动历史） · ${value.preview.blocks} 块 · ${value.preview.utf8Bytes} 字节 · ≈${value.preview.estimatedTokens} tokens · 全量不截断`
   const model = await bridge.modelConfig()
   previewModelEl.textContent = model.ok && model.value.configured
     ? `接收方：${model.value.baseUrl} · 模型 ${model.value.model}（确认前不会发起任何网络请求）`

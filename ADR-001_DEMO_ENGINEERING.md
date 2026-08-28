@@ -157,7 +157,7 @@ completeAnswer(input: {
 - 传输：**OpenAI-compatible Chat Completions**（`baseUrl + apiKey + model` 全部来自进程环境变量：`SIFT_MODEL_BASE_URL` / `SIFT_MODEL_API_KEY` / `SIFT_MODEL_ID` / `SIFT_MODEL_CTX`）。不在本 ADR 押注单一厂商；任何兼容端点（OpenAI/DeepSeek/GLM/Moonshot/本地网关均可）只要支持结构化 JSON 输出即可作为开发期 provider。
 - JSON 约束两级：优先 `response_format: { type: 'json_schema', json_schema: { name: 'answer_projection', strict: true, schema: <AnswerProjection JSON Schema> } }`；端点明确不支持时降级 `{ type: 'json_object' }` 并把 schema 注入 system prompt。`promptVersion = answer-v1` 版本化。
 - `SIFT_MODEL_BASE_URL` 必须解析成固定 origin；远程端点只允许 `https:`，仅 `localhost`、`127.0.0.1`、`[::1]` 本地网关允许 `http:`。HTTP redirect 一律拒绝，避免 API Key 或投影被转发到未预览的 origin；实现上必须关闭 SDK 的自动重定向跟随（如 fetch `redirect: 'manual'`），任何 3xx 按失败处理。确认 UI 展示最终 provider origin、model 和数据范围。
-  - **修订（2026-08-28，用户授权）**：origin 规则放宽为 origin + **固定静态 basePath**（段仅限字母/数字/`._~-`，禁 query/fragment/userinfo/`..`）——纯 origin 规则挡住了国内兼容端点（百炼 `/compatible-models/v1` 等）。重定向拒绝、仅 https 等约束不变；透明性不降：完整 baseUrl（origin+path）必须显示在确认屏（`ModelConfigSummary.baseUrl`）。详见 P0_DEMO_SCOPE §3 批注补充。
+  - **修订（2026-08-28，用户授权）**：origin 规则放宽为 origin + **固定静态 basePath**（段仅限字母/数字/`._~-`，禁 query/fragment/userinfo/`..`）——纯 origin 规则挡住了国内兼容端点（百炼 `/compatible-mode/v1` 等）。重定向拒绝、仅 https 等约束不变；透明性不降：完整 baseUrl（origin+path）必须显示在确认屏（`ModelConfigSummary.baseUrl`）。详见 P0_DEMO_SCOPE §3 批注补充。
 - 本地 zod 校验为最终关卡：非法 JSON、未知 blockId、空引用、重复 ID、超长字段、HTML/脚本输出 → 整次失败，允许一次确定性重试，仍失败按规范显示真实错误。**API Key 永不持久化、永不出现在日志与投影**（D-051）。
 
 ### Token 估算（确定性，进入 inputHash 语义）
@@ -167,7 +167,9 @@ estimateTokens(text) = ceil(ASCII 码点数 / 4) + 非 ASCII 码点数
 ```
 
 - CJK 每码点按 1 token 计（UTF-8 下 3 字节 ≈ 1 token，为保守上界）；ASCII 按 4 字符/token。纯函数、无 tokenizer 依赖、跨机器一致。
-- 四上限独立生效、全量或不发送：`20 Pages / 200 Blocks / 512 KiB UTF-8 / min(32,000, modelContextWindow − 8,000)`。任一超出 → `scope_too_large`，UI 要求用户减少页面；不截断、不抽样。
+- 四上限独立生效、全量或不发送：`20 Pages / 600 Blocks / 512 KiB UTF-8 / min(32,000, modelContextWindow − 8,000)`。任一超出 → `scope_too_large`，UI 要求用户减少页面；不截断、不抽样。
+  - **修订（2026-08-28，用户授权：块级合并投影）**：`20 Pages` 的计数单位澄清为 **distinct pageInstanceId**。投影输入改为"每页 journal 内全部已 commit 快照（distinct payload 首见序列）"后，同一页的多张快照是多个投影输入但仍是 1 页——输入份数 ≠ 页数（否则滚动历史并入后 21 张快照会误触页数上限）。
+  - **修订（2026-08-28，用户授权：MAX_BLOCKS 200 → 600）**：200 标定于"每页最新一张快照"时代，合并投影当天实测单页阅读历史 320 块即触界（字节/token 余量尚有 92%/60%）。600 锚点：每块 prompt 头部 ≈ 12 token 不计入估算，由 TOKEN_CTX_RESERVE=8k 兜底（600 × 12 ≈ 7.2k < 8k，估算保持诚实）；token 预算自此成为真正的物理约束（CJK ~800 块先超）。详见 P0_DEMO_SCOPE §2.4 批注。
 
 ## 6. E-08：敏感拦截词表 sensitive-v1
 

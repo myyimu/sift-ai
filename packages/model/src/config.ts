@@ -10,7 +10,7 @@
 //    且完整 baseUrl 必须出现在确认屏摘要里——防止把请求（连同 Key）发往未预览的位置。
 /** 已通过 origin 校验的开发期 provider 配置。apiKey 只进内存，永不外发摘要。 */
 export interface ModelConfig {
-  /** 固定 origin + 可选 basePath（如 https://dashscope.aliyuncs.com/compatible-models/v1）。请求 URL = baseUrl + /chat/completions。 */
+  /** 固定 origin + 可选 basePath（如 https://dashscope.aliyuncs.com/compatible-mode/v1）。请求 URL = baseUrl + /chat/completions。 */
   readonly baseUrl: string
   readonly origin: string
   readonly apiKey: string
@@ -80,7 +80,7 @@ export function loadModelConfig(env: Record<string, string | undefined>): ModelC
   if (url.username !== '' || url.password !== '') {
     return { status: 'model_origin_rejected', reason: 'SIFT_MODEL_BASE_URL 不得携带 userinfo' }
   }
-  // 允许固定 basePath（如百炼 /compatible-models/v1），但不得带 query/fragment——
+  // 允许固定 basePath（如百炼 /compatible-mode/v1），但不得带 query/fragment——
   // 2026-08-28 放宽：E-06 原"纯 origin"规则挡住了国内 OpenAI 兼容端点（百炼等），
   // 用户授权接入。透明性不降：path 是静态配置的一部分且必须显示在确认屏
   // （summary.baseUrl 携带完整地址），与"防 key 发往未预览位置"的原意图一致。

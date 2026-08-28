@@ -196,3 +196,46 @@ describe('capture：确定性序列化', () => {
     expect(Object.keys(payload.stats)).toEqual(['nodeCount', 'maxDepth', 'htmlUtf8Bytes'])
   })
 })
+
+// —— 2026-08-28 linux.do 实测回归：广告 token 在结构性根/大容器上的误杀 ——
+// 线上现象：body 挂 welcome-banner-* 类（切分出裸 "banner" token）→ looksLikeAd(body)
+// 命中 → 整棵 body 被删 → 可见内容满屏却 capture_too_little_content: 0 < 80。
+describe('capture：广告 token 误杀防线（AD_NEVER_TAGS / AD_MAX_SUBTREE_ELEMENTS）', () => {
+  const BODY = `<html><body class="chat-enabled welcome-banner-open"><main><p>${'正文'.repeat(60)}</p></main></body></html>`
+
+  it('body/html 挂 banner token 不再整树误杀，正文正常捕获', () => {
+    const { payload } = expectOk(captureDomSnapshot(parseHTML(BODY).document, {
+      url: 'https://example.com/',
+      title: 't',
+      contentEpoch: 0,
+      reason: 'initial_readable',
+    }))
+    expect(payload.html).toContain('正文')
+  })
+
+  it('大容器命中广告 token（子树 > 64 元素）不剥，正文保留', () => {
+    const paras = Array.from({ length: 100 }, (_, i) => `<p>第${i}段${'内容'.repeat(10)}</p>`).join('')
+    const doc = parseHTML(`<html><body><div class="banner-frame">${paras}</div></body></html>`).document
+    const { payload } = expectOk(captureDomSnapshot(doc, {
+      url: 'https://example.com/',
+      title: 't',
+      contentEpoch: 0,
+      reason: 'initial_readable',
+    }))
+    expect(payload.html).toContain('第50段')
+  })
+
+  it('小体量真广告块仍被剥（防线不放松对叶子广告的判定）', () => {
+    const doc = parseHTML(
+      `<html><body><div class="ad"><a href="https://ad.example.com/x">买它买它买它买它买它</a></div><main><p>${'正文'.repeat(60)}</p></main></body></html>`,
+    ).document
+    const { payload } = expectOk(captureDomSnapshot(doc, {
+      url: 'https://example.com/',
+      title: 't',
+      contentEpoch: 0,
+      reason: 'initial_readable',
+    }))
+    expect(payload.html).not.toContain('ad.example.com')
+    expect(payload.html).toContain('正文')
+  })
+})

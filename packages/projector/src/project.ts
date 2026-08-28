@@ -141,18 +141,22 @@ export function projectQuestion(params: ProjectQuestionParams): ProjectorResult 
     sources: block.sources,
   }))
 
-  // 限额（全量或不发送）：超限即整体拒绝，绝不截断——用户应缩小 scope
+  // 限额（全量或不发送）：超限即整体拒绝，绝不截断——用户应缩小 scope。
+  // maxPages 计 distinct pageInstanceId：块级合并投影（2026-08-28，P0_DEMO_SCOPE §2.4
+  // 批注）之后同一页的多张历史快照是多个 pages 输入但仍是 1 页——输入份数 ≠ 页数，
+  // 冻结限额的本意（20 Pages = scope 成员页数）从未包含快照份数。
+  const distinctPages = new Set(pages.map(p => p.source.pageInstanceId)).size
   const totalUtf8Bytes = blocks.reduce((sum, b) => sum + utf8Bytes(b.text), 0)
   const estimatedTokens = estimateTokens(params.question) + blocks.reduce((sum, b) => sum + estimateTokens(b.text), 0)
   if (
-    pages.length > limits.maxPages ||
+    distinctPages > limits.maxPages ||
     blocks.length > limits.maxBlocks ||
     totalUtf8Bytes > limits.maxUtf8Bytes ||
     estimatedTokens > limits.maxEstimatedTokens
   ) {
     return {
       status: 'projection_limit_exceeded',
-      usage: { pages: pages.length, blocks: blocks.length, utf8Bytes: totalUtf8Bytes, estimatedTokens },
+      usage: { pages: distinctPages, blocks: blocks.length, utf8Bytes: totalUtf8Bytes, estimatedTokens },
       limits,
     }
   }

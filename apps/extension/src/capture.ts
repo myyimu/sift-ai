@@ -39,6 +39,36 @@ const AD_TOKENS = new Set([
   'advertising', 'banner', 'banners', 'promo', 'promos', 'sponsor', 'sponsored',
 ])
 
+/**
+ * 结构性根元素永不参与广告判定：2026-08-28 linux.do 实测，Discourse
+ * welcome-banner 主题在 <body> 上挂了含 banner token 的类（welcome-banner-*
+ * 按 [-_\s] 切分后产出裸 "banner"），looksLikeAd(body) 命中 → 整棵 body 被
+ * 从克隆里删除 → 满屏可见内容 capture_too_little_content: 0 < 80。
+ * 三轮线上 DOM 诊断定位（计数/标签级，未取页面内容）。
+ */
+const AD_NEVER_TAGS = new Set(['html', 'body'])
+
+/**
+ * 广告单元的子树元素上限：命中广告 token 但子树超过它的是结构容器（wrapper
+ * class 误命中），不剥、继续向下递归——子树内部真正的小广告块仍会被各自的
+ * token 命中剥掉。第二道防线，防其他站点"外层容器带广告词吞正文"的同类误杀。
+ */
+const AD_MAX_SUBTREE_ELEMENTS = 64
+
+function isSmallSubtree(el: Element): boolean {
+  let count = 0
+  const stack: Element[] = [el]
+  while (stack.length > 0) {
+    const current = stack.pop()!
+    for (const child of Array.from(current.children)) {
+      count += 1
+      if (count > AD_MAX_SUBTREE_ELEMENTS) return false
+      stack.push(child)
+    }
+  }
+  return true
+}
+
 /** 编辑态判定：contenteditable≠false 或 role=textbox —— 子树整棵不采集。 */
 function isEditableSubtree(el: Element): boolean {
   const ce = el.getAttribute('contenteditable')
@@ -105,7 +135,13 @@ function sanitizeClone(node: Node, depth: number, tally: WalkTally, baseUrl: str
   if (node.nodeType !== ELEMENT_NODE) return 0
 
   const el = node as Element
-  if (DROP_TAGS.has(el.tagName.toLowerCase()) || isEditableSubtree(el) || looksLikeAd(el)) {
+  const tag = el.tagName.toLowerCase()
+  if (DROP_TAGS.has(tag) || isEditableSubtree(el)) {
+    el.parentNode?.removeChild(el)
+    return 0
+  }
+  // 广告判定双重防线：结构性根元素豁免 + 子树超上限不剥（见 AD_NEVER_TAGS 注）
+  if (!AD_NEVER_TAGS.has(tag) && isSmallSubtree(el) && looksLikeAd(el)) {
     el.parentNode?.removeChild(el)
     return 0
   }

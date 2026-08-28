@@ -128,19 +128,43 @@ describe('限额（全量或不发送）', () => {
     expect(r).toMatchObject({
       status: 'projection_limit_exceeded',
       usage: { pages: 21 },
-      limits: { maxPages: 20, maxBlocks: 200, maxUtf8Bytes: 512 * 1024, maxEstimatedTokens: 32_000 },
+      limits: { maxPages: 20, maxBlocks: 600, maxUtf8Bytes: 512 * 1024, maxEstimatedTokens: 32_000 },
     })
   })
 
-  it('201 块 → limit_exceeded', () => {
-    const paras = Array.from({ length: 201 }, (_, i) => `<p>${LONG}（块 ${i}）</p>`).join('')
+  it('同一页 25 张快照不占 pages 限额（usage = distinct 页数；块级合并投影）', () => {
+    const r = projectQuestion(buildParams(Array.from({ length: 25 }, (_, i) => ({
+      pid: 'p-001',
+      capturedAt: `2026-08-27T00:00:${String(i).padStart(2, '0')}.000Z`,
+      body: `<p>${LONG}（快照 ${i}）</p>`,
+      stateVersion: i + 1,
+    }))))
+    expect(r.status).toBe('ok')
+    if (r.status !== 'ok') return
+    expect(r.projection.pageStateWatermarks).toHaveLength(1) // 仍是一页
+    expect(r.projection.blocks).toHaveLength(25)
+    // 块序 = 首见顺序（capturedAt 升序）；快照份数不改变 id 编号语义
+    expect(r.projection.blocks[0]!.sources[0]!.stateVersion).toBe(1)
+    expect(r.projection.blocks[24]!.sources[0]!.stateVersion).toBe(25)
+  })
+
+  it('21 页 × 各 2 快照 → usage.pages 按distinct 页数计 = 21（输入份数 42 不是页数）', () => {
+    const specs = Array.from({ length: 21 }, (_, i) => [
+      { pid: `p-${String(i).padStart(3, '0')}`, capturedAt: '2026-08-27T00:00:00.000Z', body: `<p>${LONG}（页 ${i}）</p>`, stateVersion: 1 },
+      { pid: `p-${String(i).padStart(3, '0')}`, capturedAt: '2026-08-27T00:00:01.000Z', body: `<p>${LONG}（页 ${i} 补充）</p>`, stateVersion: 2 },
+    ]).flat()
+    const r = projectQuestion(buildParams(specs))
+    expect(r).toMatchObject({ status: 'projection_limit_exceeded', usage: { pages: 21 } })
+  })
+
+  it('601 块 → limit_exceeded（2026-08-28 修订：上限 200→600）', () => {
+    const paras = Array.from({ length: 601 }, (_, i) => `<p>${LONG}（块 ${i}）</p>`).join('')
     const r = projectQuestion(buildParams([{ pid: 'p-001', capturedAt: '2026-08-27T00:00:00.000Z', body: paras }]))
-    expect(r).toMatchObject({ status: 'projection_limit_exceeded', usage: { blocks: 201 } })
+    expect(r).toMatchObject({ status: 'projection_limit_exceeded', usage: { blocks: 601 } })
   })
 
   it('utf8 字节超 512KiB → limit_exceeded', () => {
-    // 每块约 1KiB × 300 块 ≈ 300KiB 不足以超；直接造 600 块 × ~1KiB（块数 200 限额会先触发，
-    // 故本用例改为：200 块上限内单块超长 → 用 524289/200 ≈ 2.7KiB/块 × 200 块）
+    // 块数 600 限额内单块超长：200 块 × 3KiB/块 = 600KiB > 512KiB（字节先于块数触发）
     const big = '长'.repeat(1000) // 3 KiB/块
     const paras = Array.from({ length: 200 }, (_, i) => `<p>${big}（块 ${i}）</p>`).join('')
     const r = projectQuestion(buildParams([{ pid: 'p-001', capturedAt: '2026-08-27T00:00:00.000Z', body: paras }]))

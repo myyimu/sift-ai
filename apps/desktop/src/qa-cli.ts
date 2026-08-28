@@ -123,12 +123,12 @@ async function main(): Promise<number> {
   }
   if (built.status === 'projection_limit_exceeded') {
     process.stderr.write(
-      `[qa-cli] projection_limit_exceeded：pages=${built.usage.pages} blocks=${built.usage.blocks} bytes=${built.usage.utf8Bytes} tokens≈${built.usage.estimatedTokens}（全量或不发送——请缩小 scope）\n`,
+      `[qa-cli] projection_limit_exceeded：pages=${built.usage.pages} blocks=${built.usage.blocks} bytes=${built.usage.utf8Bytes} tokens≈${built.usage.estimatedTokens}（全量或不发送——请缩小 scope 或减少阅读历史）\n`,
     )
     return 4
   }
   process.stderr.write(
-    `[qa-cli] 投影就绪：pages=${built.preview.pages} blocks=${built.preview.blocks} bytes=${built.preview.utf8Bytes} tokens≈${built.preview.estimatedTokens} inputHash=${built.projection.inputHash.slice(0, 16)}…\n`,
+    `[qa-cli] 投影就绪：pages=${built.preview.pages} snapshots=${built.preview.snapshots}（含滚动历史） blocks=${built.preview.blocks} bytes=${built.preview.utf8Bytes} tokens≈${built.preview.estimatedTokens} inputHash=${built.projection.inputHash.slice(0, 16)}…\n`,
   )
 
   const asked = await askModel(rootDir, built.projection, config.config)

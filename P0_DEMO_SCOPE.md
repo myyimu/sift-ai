@@ -55,6 +55,16 @@ Demo 只验证这条纵向链路：
 
 Demo 的 `readable-v1` 条件为：存在非空 body，删除 script/style/template/noscript/控件和明确 loading/骨架节点后至少有 80 个非空白文本字符。授权后最多等待 5 秒；仍不足时返回 `capture_too_little_content`，不包装空页面。
 
+> **批注（2026-08-28，实测修正）**：源端去噪的广告 token 规则（class/id 按
+> `[-_\s]` 切分后与词表精确匹配、命中整树移除）补充两道防线：**html/body 等
+> 结构性根元素永不参与广告判定**；**命中 token 但子树超过 64 个元素的不剥**
+> （继续向下递归，叶子广告块仍会被各自命中）。起因：linux.do（Discourse
+> welcome-banner 主题）在 `<body>` 上挂含 `banner` token 的类，旧规则把整棵
+> body 删除，页面可见内容满屏却报 `capture_too_little_content: 0 < 80`——
+> 经三轮线上 DOM 诊断（仅计数/标签级输出，未取页面内容）定位。这是对规则
+> 原意（剥广告单元，非剥结构容器）的缺陷修复，非放宽；回归测试见
+> `apps/extension/test/capture.test.ts`（body 误杀/大容器误杀/小广告仍剥三例）。
+
 ### 2.3 本地数据
 
 Demo 只需要：
@@ -138,7 +148,28 @@ Demo 不做语义 Retrieval。选择算法固定为：
 4. 整体必须落在所有上限内；
 5. 任一上限超出就要求用户减少页面，不静默截断、不抽样、不伪装成完整 scope。
 
-默认上限：20 Pages、200 Blocks、512 KiB UTF-8、预计输入 Token 不超过 `min(32,000, modelContextWindow - 8,000)`。
+默认上限：20 Pages、600 Blocks（2026-08-28 修订，原 200——见下批注）、512 KiB UTF-8、预计输入 Token 不超过 `min(32,000, modelContextWindow - 8,000)`。
+
+> **批注（2026-08-28，用户授权：块级合并投影）**：用户实测后提出核心诉求——"提问的对象
+> 应该是我一段时间看的内容，不是提问瞬间的最后一屏"。据此投影输入从"每页冻结 Page State
+> 的最新一张快照"改为"**该页 journal 内全部已 commit 快照（distinct payload 首见序列）的
+> 块级合并**"：同文本跨快照按 textHash 去重并合并 sources，块终序按首见 capturedAt
+> （= 阅读顺序）。页内滚动历史自此不丢——虚拟化列表（如 Discourse）滚过的楼层重新成为
+> 可提问的证据；数据全部来自本就全量保留的 journal，捕获侧零改动。`maxPages` 计数单位
+> 澄清为 distinct pageInstanceId（同页多快照是多个投影输入但仍是 1 页）。全部预算与
+> "全量或不发送"不变：长帖累积并集超限仍整体拒绝并要求缩小 scope。实现：
+> `apps/desktop/src/qa-service.ts` buildProjectionForScope（逐快照 stateVersion 按
+> page-state reducer 同款重放推导）；回归见 `apps/desktop/test/qa-service.test.ts`
+> "滚动历史块级合并"用例与 `packages/projector/test/project.test.ts` 快照数/页数用例。
+>
+> **同日修订（用户授权：MAX_BLOCKS 200 → 600）**：合并投影落地当天实测即触界——单页
+> 阅读历史 320 块（39KB/12.7k token，字节 7%、token 40%）被 200 块计数上限拒绝，且
+> current_page 已是最小 scope、"缩小 scope"无从下手。200 标定于"每页最新一张快照"
+> 时代（20 页 × ~10 块），合并语义下成为与字节/token 无关的人为瓶颈。600 的锚点：
+> 每块 prompt 头部（`[b-0123|kind]` ≈ 10-12 token）不计入 estimateTokens，由
+> TOKEN_CTX_RESERVE=8k 兜底，600 × 12 ≈ 7.2k < 8k——估算保持诚实；此后 token 预算
+> `min(32,000, ctx−8,000)` 成为真正的物理约束（CJK 内容 ~800 块时先于块数触发）。
+> 防漂移守卫 `packages/shared/test/limits.test.ts` 同步。
 
 ### 2.5 AnswerProjection
 

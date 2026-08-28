@@ -312,7 +312,7 @@ LLM 输出受 schema 约束的 JSON
 - 可缓存，也可删除后重建；
 - 不因生成 Markdown 而修改 Observation Log 或 Page State；
 - 将网页文本视为不可信资料，不能把网页中的指令提升为系统指令。
-- Demo 不做 FTS/Embedding/RAG 或语义 Retrieval；用户选择的整个 scope 必须落在 20 Pages、200 Blocks、512 KiB 和预计最多 32k Token 的上限内；超限就要求缩小 scope。
+- Demo 不做 FTS/Embedding/RAG 或语义 Retrieval；用户选择的整个 scope 必须落在 20 Pages、600 Blocks（2026-08-28 修订，原 200——块级合并投影后单页阅读历史常态数百块，见 P0_DEMO_SCOPE §2.4 批注）、512 KiB 和预计最多 32k Token 的上限内；超限就要求缩小 scope。
 - AnswerProjection 每个 claim 至少引用一个 scope 内 DemoEvidenceBlock；引用存在只证明结构有效，语义支持率必须通过人工夹具评估。
 
 QuestionProjection 与 AnswerProjection 的完整 schema、远程确认和失败规则以 `P0_DEMO_SCOPE.md` 为准。
