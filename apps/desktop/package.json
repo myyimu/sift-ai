@@ -23,10 +23,10 @@
     "@sift/store": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
+    "@types/node": "^26.3.0",
     "electron": "44.0.0",
     "electron-builder": "26.15.3",
     "electron-builder-squirrel-windows": "26.15.3",
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.28.2"
   }
 }

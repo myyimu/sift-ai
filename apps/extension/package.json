@@ -15,9 +15,9 @@
     "@sift/host": "workspace:*",
     "@sift/projector": "workspace:*",
     "@sift/store": "workspace:*",
-    "@types/chrome": "^0.0.300",
-    "esbuild": "^0.25.0",
+    "@types/chrome": "^0.2.7",
+    "esbuild": "^0.28.2",
     "linkedom": "^0.18.9",
-    "vitest": "^3.0.0"
+    "vitest": "^4.1.11"
   }
 }

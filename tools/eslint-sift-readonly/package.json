@@ -15,7 +15,7 @@
     "eslint": ">=9"
   },
   "devDependencies": {
-    "eslint": "^9.18.0",
-    "vitest": "^3.0.0"
+    "eslint": "^10.9.1",
+    "vitest": "^4.1.11"
   }
 }
