@@ -167,6 +167,17 @@ type AnswerProjection = {
 
 本地验证器必须拒绝非法 JSON、未知 block ID、空引用、重复 ID、超长字段和 HTML/脚本输出。引用存在只证明结构有效，不自动证明语义蕴含；UI 必须标记回答为 AI 归纳，并提供原始 EvidenceBlock。Demo 通过人工夹具评估 claim 是否被引用证据支持。
 
+> **批注（2026-08-28，已落地）**：ModelAdapter 与本地验证器实现于 `packages/model`
+> （`@sift/model`，依赖仅 @sift/shared + Node 内建）。adapter 按 ADR-001 E-06 冻结语义：
+> OpenAI 兼容 Chat Completions 非流式单次调用；`response_format` 两级
+> （`json_schema strict` → 端点 400 且报文提及 response_format/json_schema 时降级
+> `json_object` + schema 注入 system prompt，属协议分支不算重试）；网络/非 2xx/校验失败
+> 恰好一次确定性重试；超时 90s（`MODEL_TIMEOUT_MS`，demo 默认值放 @sift/model，
+> 不触碰冻结的 limits.ts）。验证器 `validateAnswerProjection` 实现上述全部拒绝规则
+> （zod 复用 shared schema → 跨对象不变式 → demo 版本化长度上限 → HTML/脚本启发式）。
+> **analyzer 三元组由本地盖章**（provider=baseUrl host、model=config.model、
+> promptVersion='answer-v1'），模型自报值一律覆盖——已在单测与全链 E2E 双重断言。
+
 每次回答顶部必须渲染 CoverageManifest 摘要（`P0_COVERAGE_MANIFEST_SPEC.md` §5 的固定块）；`limitations` 不得与 manifest 矛盾。absent 语义（"最近一次观察中未见"）不得展示为"已删除"。
 
 问题超出 scope 时，模型必须返回 limitation；不得联网补充、调用浏览器或把预设问题当白名单。
@@ -187,6 +198,14 @@ Demo 尚未完成真实登录态数据的本地加密与密钥管理，因此：
 - 取消或模型失败不影响本地 Capture。
 
 真实登录态页面、本地加密、系统凭据库、正式删除承诺和远程处理长期授权属于 P0.5 的发布前阶段门。
+
+> **批注（2026-08-28，已落地）**：本节模型边界由 `@sift/model` + `apps/desktop`
+> qa-service/UI 落地：API Key 只从进程环境 `SIFT_MODEL_API_KEY` 读取（qa-cli 亦不接收
+> key 参数），不持久化、不进日志、不进答案投影与 store（E2E 断言答案文件无 key）；
+> 确认屏（UI preview / qa-cli `--out` 前）展示 Page/Block/字节/预计 Token、provider
+> origin 与 model；用户确认前模型调用次数为零（全链 E2E 断言 mock 恰好 1 次请求，
+> degrade 恰好 2 次）；coverage 摘要（`renderCoverageSummary`）同时进入 system prompt
+> 与 UI 回答顶部。真实 provider 冒烟留给用户手动（RUNBOOK §1/§5.6 记录 env 配置法）。
 
 ## 4. 明确降级到 P0.5
 

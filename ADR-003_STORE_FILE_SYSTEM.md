@@ -84,4 +84,15 @@ root 默认 `%LOCALAPPDATA%\Sift\store`（Windows），`SIFT_STORE_ROOT`
 
 - 打开成本随 journal 线性增长（P0 演示量级可忽略）；
 - 无跨进程写锁（UI 只读；dump 工具只读）；
+
+> **批注（2026-08-28，验收门 14 最小实现）**：`packages/store/src/maintenance.ts`
+> 增加 UI 侧**维护性删除例外**——`deleteSessionData(root, sessionId)`（journal 按
+> session 分区重写 tmp+rename、按幸存 pid 回收 page-states、按幸存 hash 引用 GC
+> blob）与 `deleteAllData(root)`（清空 store 内容 + 可选 answers 姊妹目录；根目录
+> 保留）。host 仍是唯一捕获写者；删除不与捕获并发。**store_busy 语义（Windows
+> 细节）**：Node 打开文件带 `FILE_SHARE_DELETE`，对被占用文件 unlink/rm 会"成功"
+> 留下孤儿句柄（POSIX 语义）——故 busy 探测用 journal 上的 tmp+rename 覆盖探测
+> （rename 覆盖被占用文件会被系统诚实拒绝 EPERM/EBUSY），失败返回
+> `SiftStoreError('storage_error','store_busy: …')` 而非伪造成功（验收门 13 风格）。
+> 单测覆盖：精确删除断言、幂等、writer 句柄占用 → store_busy 且 journal 字节不变。
 - 引用计数不实时持久化（打开时重建，关闭即弃）。

@@ -8,7 +8,7 @@ import './styles.css'
 import { renderCoverageSummary } from '@sift/shared'
 import type { QuestionProjection } from '@sift/shared'
 import type { AskModelIpc, IpcResult, SiftBridge } from './preload'
-import type { BuildProjectionResult, StoreOverview, StoredAnswerSummary } from '../qa-service'
+import type { StoreOverview } from '../qa-service'
 
 declare const window: Window & { sift?: SiftBridge }
 

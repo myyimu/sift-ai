@@ -27,6 +27,25 @@ node tools/scripts/register-sift-native-host.mjs register   # 写 HKCU + manifes
 - `register` 会写注册表（仅 HKCU、仅 Chrome 键）和 `%LOCALAPPDATA%\Sift\native-host\` 清单，
   `remove` 可完整回滚——执行前确认这是你想要的写操作。
 
+### 1.1 模型环境变量（问答链路，2026-08-28 起）
+
+`@sift/model`（OpenAI 兼容 Chat Completions）只从进程环境读取配置，**API Key 永不持久化、
+不进日志/投影/store**：
+
+| 变量 | 含义 | 示例 |
+|---|---|---|
+| `SIFT_MODEL_BASE_URL` | 端点 origin（https；仅 localhost/127.0.0.1/[::1] 允许 http；不得带 path/query） | `https://api.example.com` |
+| `SIFT_MODEL_API_KEY` | Bearer Key（仅环境，qa-cli 不接收 key 参数） | `sk-…` |
+| `SIFT_MODEL_ID` | 模型 ID | `gpt-4o-mini` |
+| `SIFT_MODEL_CTX` | 上下文窗口 token 数（投影预算用） | `128000` |
+
+qa-cli 可用 flag 覆盖前三者（`--model-base-url/--model-id/--model-ctx`），key 只认环境：
+
+```bash
+node apps/desktop/dist/qa-cli.js --store-root <root> --scope latest-session \
+  --question "这个页面主要讲了什么？" --out answer.json      # env 未配则报 model_config_missing
+```
+
 ## 2. 启动
 
 ### 2.1 UI（打包产物）
@@ -80,16 +99,21 @@ manifest 的 path 指向 `pack2\win-unpacked\SiftHost.cmd`——重新打包到�
 |---|---|---|
 | 静态 | `pnpm lint` / `pnpm lint:ast` | 全仓 / 观察侧两层规则 |
 | 类型 | `pnpm typecheck` | 全部 workspace 包 |
-| 单元 | `pnpm test` | vitest（365 用例：shared 契约 / host framing+mode+capture 协议 / store 含读侧 readOnly / extension capture·debounce·transport·SW 生命周期 / projector 抽取·投影·manifest / dump 工具 / eslint 规则正反例）。**必须从仓库根跑**：`pnpm -r test` 会因 eslint-sift-readonly 包的 root 配置找不到测试文件而误报失败 |
+| 单元 | `pnpm test` | vitest（411 用例：shared 契约 143 / host framing+mode+capture 52 / store 含读侧 readOnly+维护性删除 40 / extension capture·debounce·transport·SW 含 command 手势 54 / projector 抽取·投影·manifest 42 / **@sift/model adapter·config·validate 25** / **desktop qa-service 7** / 工具 48）。**必须从仓库根跑**：`pnpm -r test` 会因 eslint-sift-readonly 包的 root 配置找不到测试文件而误报失败 |
 | 全链路（零 Chrome） | `pnpm vitest run apps/extension/test/e2e` | linkedom 夹具 → capture → transport → 真实 host-loop → 真实 FsStore 的 in-process 闭环（含全量重放去重） |
 | 模拟 Chrome spike | `node tools/spike/run-e03-spike.mjs` | UI 开/关两态各 100 次 connect/disconnect + 帧往返；`--rounds 10` 快速冒烟 |
 | 单链路诊断 | `node tools/spike/manual-roundtrip.mjs [--ui]` | 真实 `.cmd` 链路单次往返；`--ui` 先起 UI 实例 |
 | E2E 管道自检 | `node tools/spike/run-chrome-e2e.mjs --cft --plumbing` | 无需注册表；验证 Chrome 启动/扩展加载/SW/报告通道/connectNative 全链触达 |
 | 正式 E2E | `node tools/spike/run-chrome-e2e.mjs --cft` | 前置：注册表已 register。判定：UI 开/关两态各 100/100。2026-08-27 基线：p50=116ms |
+| **全链问答 E2E** | `node tools/e2e/run-full-chain-e2e.mjs` | 前置：register + 最新 pack2 + `pnpm build && pnpm build:desktop`。真 Chrome 手势（Alt+Shift+S SendKeys）→ 授权/捕获落盘 → qa-cli 真投影 → 本地 mock OpenAI → 校验 → 答案落盘断言 + UI 冒烟。`--mode degrade` 验证 json_schema→json_object 降级（断言变恰好 2 次调用）；`--keep` 保留现场。2026-08-28 基线：strict/degrade 双 PASS |
 
 - `--cft` 自动下载 Chrome for Testing 到 `tools/.cache/cft`（npmmirror 镜像；本机品牌
   Chrome 137+ 忽略 `--load-extension`，故必须用 CfT）。CfT 附加 `--no-sandbox` 的原因与
   其余环境坑见 `tools/spike/README.md`。
+- 全链问答 E2E 的 SendKeys 依赖窗口焦点：harness 已用 `AppActivate(chromePid)` +
+  隐藏 PowerShell 窗口（实测默认弹窗会抢焦点、手势 100% 闪失）。若仍闪失，失败信息
+  会指明直接重跑 + `--keep`；`Alt+Shift+S` 若与其他扩展冲突（`chrome://extensions/shortcuts`）
+  Chrome 不绑定该键，需手动确认一次。
 - E2E 结束后确认无残留：`tasklist /FI "IMAGENAME eq Sift.exe"`（harness 已前置检查并
   树杀回收，正常情况无需手动清理）。
 
@@ -111,7 +135,9 @@ node tools/scripts/serve-fixtures.mjs        # 127.0.0.1:8765，仅伺服 fixtur
 
 1. Chrome（已加载 `apps/extension/dist`，§2.3）打开
    `http://127.0.0.1:8765/benign-article.html`；
-2. 点击扩展 action 图标 → badge 显示 `S`（授权 + ISOLATED 注入 + 初始快照）；
+2. 点击扩展 action 图标（或按 `Alt+Shift+S` command 手势，2026-08-28 起——与点击
+   等价，见 P0_EXTENSION_ARCHITECTURE §2.1 批注）→ badge 显示 `S`（授权 + ISOLATED
+   注入 + 初始快照）；
 3. 验证落盘（只读，绝不打印正文）：
 
 ```bash
@@ -154,6 +180,30 @@ journal 幂等返回 `deduplicated`——`pnpm vitest run apps/extension/test/e2
 自动化的 mock 语义验证见 `apps/extension/test/service-worker.test.ts`（文件头声明
 mock 局限）；真 Chrome 行为以本节手动步骤为准。
 
+### 5.6 问答演示：授权 → 投影 → 确认 → 回答（2026-08-28 起）
+
+前置：§5.2 完成（store 里已有授权页面的真实捕获）+ §1.1 模型 env 已配（真实 provider；
+E2E 用的 mock 端点见 `node tools/e2e/mock-openai.mjs --port 18789`）。
+
+1. 启动 UI（§2.1，与捕获同一 store）：状态行应显示"已保存到本地"；
+2. scope 选目标页面/会话 → 输入问题（或点预设）→ **生成预览**：确认屏展示
+   Page/Block/字节/预计 Token、provider origin、model 与将发送文本预览——
+   **此时模型调用次数为零**（网络只发生在下一步确认之后）；
+3. **确认发送** → 状态"正在回答"→ 回答顶部渲染 CoverageManifest 摘要（单元数/
+   页面数/站点数/分页覆盖"未穷尽"/观察时段/未覆盖清单），claims 引用块 id，
+   analyzer 为本地盖章三元组（provider=端点 host、model=配置值、promptVersion=answer-v1）；
+4. 答案文件落 `<store>\..\answers\<inputHash>.json`（自包含 QuestionProjection +
+   AnswerProjection，同 inputHash 覆盖 = 可重建语义）；UI "历史回答"列表可回看；
+5. 模型失败/校验失败：UI 显示"回答或引用校验失败"或"模型未配置"，本地捕获不受影响。
+
+命令行同路径：`node apps/desktop/dist/qa-cli.js --store-root <root> --scope latest-session
+--question "…" --out answer.json`（§1.1）。UI 按钮自动化不做——qa-service 即产品路径，
+差异仅在 IPC/渲染层；全链自动化见 §4 "全链问答 E2E"。
+
+数据控制（验收门 14 最小实现）：UI 底部"删除本会话数据"（journal 按 session 分区重写 +
+page-state/blob GC）与"删除全部数据"（含 answers 目录，两步确认）。host 持句柄时返回
+真实 `store_busy` 而非伪造成功——建议关闭已授权页面后再删。
+
 ## 6. 常见问题速查
 
 | 症状 | 原因与处理 |
@@ -163,6 +213,8 @@ mock 局限）；真 Chrome 行为以本节手动步骤为准。
 | E2E "20s 未收到扩展联系" 且 chrome 日志 0 字节 | CfT 沙箱静默失败（harness 已默认 `--no-sandbox`；自定义启动参数时注意） |
 | connectNative 报 `host not found` | 注册表未注册或 manifest path 指向的目录已变 → `status` 查看、`register` 修正 |
 | 重打包报 app.asar 被锁 | IDE 监视器占用 → 换 `directories.output` 目录，或参照 `.vscode/settings.json` 排除监视 |
+| 全链 E2E 手势 15s×3 未授权 | SendKeys 焦点闪失（直接重跑 + `--keep`）或 `Alt+Shift+S` 被其他扩展占用（`chrome://extensions/shortcuts` 确认） |
+| UI 删除数据报 `store_busy` | host 仍持 journal 句柄（页面还授权着）→ 关闭已授权页面后重试；这是诚实失败，不是 bug |
 
 ## 7. 文档索引
 

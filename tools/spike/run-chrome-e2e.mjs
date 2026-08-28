@@ -29,16 +29,15 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { createWriteStream } from 'node:fs'
-import { Readable } from 'node:stream'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { NATIVE_HOST_ALLOWED_ORIGIN, NATIVE_HOST_NAME } from '../scripts/sift-demo-constants.mjs'
+// Chrome 获取（findChrome/ensureCft）抽出至 cft.mjs（Phase 3 全链 E2E 复用；行为不变）。
+import { ensureCft, findChrome } from './cft.mjs'
 
 const PRODUCT_MANIFEST = resolve('apps/extension/public/manifest.json')
 const SIFT_EXE = resolve('apps/desktop/pack2/win-unpacked/Sift.exe')
-const CFT_DIR = resolve('tools/.cache/cft')
-const CFT_MIRROR = 'https://registry.npmmirror.com/-/binary/chrome-for-testing'
 
 function parseArgs(argv) {
   const out = { rounds: 100, plumbing: false, keep: false, chrome: null, cft: false }
@@ -50,95 +49,6 @@ function parseArgs(argv) {
     else { console.error(`unknown flag ${argv[i]}`); process.exit(2) }
   }
   return out
-}
-
-function findChrome() {
-  const candidates = [
-    join(homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  ]
-  for (const c of candidates) if (existsSync(c)) return c
-  console.error('未找到 chrome.exe（用 --chrome <path> 指定）')
-  process.exit(2)
-}
-
-/** 递归找 chrome.exe（CfT zip 解压后的目录名随版本/命名变化）。 */
-function findChromeExeUnder(dir) {
-  const stack = [dir]
-  while (stack.length) {
-    const d = stack.pop()
-    for (const e of readdirSync(d, { withFileTypes: true })) {
-      const p = join(d, e.name)
-      if (e.isDirectory()) stack.push(p)
-      else if (e.name.toLowerCase() === 'chrome.exe') return p
-    }
-  }
-  return null
-}
-
-/** Chrome for Testing：npmmirror 镜像自动下载（优先与本机 Chrome 同大版本）。 */
-async function ensureCft() {
-  const marker = join(CFT_DIR, 'version.txt')
-  if (existsSync(marker)) {
-    const cached = findChromeExeUnder(CFT_DIR)
-    if (cached) {
-      console.log(`CfT（已缓存 ${readFileSync(marker, 'utf8').trim()}）: ${cached}`)
-      return cached
-    }
-  }
-  mkdirSync(CFT_DIR, { recursive: true })
-  console.log(`下载 Chrome for Testing（${CFT_MIRROR}）……`)
-  const list = await (await fetch(`${CFT_MIRROR}/`)).json()
-  const versions = list.map((x) => String(x.name).replace(/\/$/, '')).filter((v) => /^\d+\.\d+\.\d+\.\d+$/.test(v))
-  if (!versions.length) throw new Error('镜像版本列表为空')
-  const localMajor = installedChromeMajor()
-  const pick = (localMajor && versions.find((v) => v.startsWith(localMajor + '.'))) || versions[versions.length - 1]
-  const zipName = await pickZipName(pick)
-  const url = `${CFT_MIRROR}/${pick}/win64/${zipName}`
-  console.log(`  版本 ${pick} <- ${url}`)
-  const zipPath = join(CFT_DIR, zipName)
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`)
-  await streamToFile(res.body, zipPath)
-  // 用 System32 的 bsdtar（支持 zip；PATH 里 Git 的 GNU tar 不认 zip，
-  // 且 GNU 的 --force-local 是它自己的选项，bsdtar 无需也 不支持）。
-  const t = spawnSync('C:\\Windows\\System32\\tar.exe', ['-xf', zipPath, '-C', CFT_DIR], { stdio: 'pipe' })
-  if (t.status !== 0) throw new Error(`解压失败: ${t.stderr}`)
-  // zip 保留在 tools/.cache/cft（.gitignore 已排除；不做不可验证的动态删除）。
-  const exe = findChromeExeUnder(CFT_DIR)
-  if (!exe) throw new Error('解压后未找到 chrome.exe')
-  writeFileSync(marker, pick)
-  console.log(`  就绪: ${exe}`)
-  return exe
-}
-
-/** win64 目录下 zip 命名随版本变化（chrome-win64.zip / chrome-for-testing-win64.zip）。 */
-async function pickZipName(version) {
-  const files = await (await fetch(`${CFT_MIRROR}/${version}/win64/`)).json()
-  const names = files.map((x) => String(x.name))
-  return names.find((n) => /^chrome(-for-testing)?-win64\.zip$/.test(n))
-}
-
-function installedChromeMajor() {
-  try {
-    const p = findChrome()
-    const v = spawnSync('powershell', ['-NoProfile', '-Command', `(Get-Item '${p}').VersionInfo.ProductVersion`], { encoding: 'utf8' })
-    const m = (v.stdout || '').match(/(\d+)\./)
-    return m ? Number(m[1]) : null
-  } catch { return null }
-}
-
-async function streamToFile(webBody, path) {
-  // fetch 的 body 是 Web ReadableStream，须先转 Node 流再 pipe。
-  const nodeStream = Readable.fromWeb(webBody)
-  await new Promise((res, rej) => {
-    const ws = createWriteStream(path)
-    nodeStream.pipe(ws)
-    ws.on('finish', res)
-    ws.on('error', rej)
-    nodeStream.on('error', rej)
-  })
 }
 
 const { ELECTRON_RUN_AS_NODE: _ignored, ...CLEAN_ENV } = process.env

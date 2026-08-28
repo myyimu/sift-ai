@@ -26,7 +26,10 @@ const common = {
   logLevel: 'info',
 }
 
-await build({ ...common, entryPoints: ['src/main.ts'], outfile: 'dist/main.js' })
+// main 用 CJS（.cjs）：Electron 33 下 ESM main 静态 import 'electron' 会踩
+// cjsPreparseModuleExports（module.exports undefined）；CJS require('electron')
+// 是稳定形态。package.json "main" 指向 dist/main.cjs。
+await build({ ...common, format: 'cjs', entryPoints: ['src/main.ts'], outfile: 'dist/main.cjs' })
 await build({ ...common, entryPoints: ['src/host-main.ts'], outfile: 'dist/host-main.js' })
 await build({ ...common, entryPoints: ['src/qa-cli.ts'], outfile: 'dist/qa-cli.js' })
 // .cjs 后缀：package.json "type":"module" 下 .js 会被当 ESM，而 sandbox 预载只支持 CJS

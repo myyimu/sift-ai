@@ -21,6 +21,7 @@
 //   - overview 5s 轮询 + 窗口 focus 刷新（readOnly store 开-读-关，与 host 写者共存）；
 //   - 确认屏在渲染层（预览即 buildProjection 的本地结果）；主进程只在她显式
 //     invoke askModel 后才触碰网络（验收门 9：确认前模型调用次数为零）。
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { detectNativeHostLaunch } from '@sift/host/mode'
 import {
   askModel,
@@ -44,10 +45,11 @@ if (isHost) {
   process.stderr.write('[sift] native host launch args reached UI exe: rejected (see ADR-002; manifest must point to SiftHost.cmd)\n')
   process.exit(1)
 } else {
-  // UI 模式。动态 import：host 分支完全不触碰 Electron 运行时。
+  // UI 模式。electron 用静态 ESM import（Electron 33 对 ESM main 的标准形态；
+  // spike 期的动态 import 会踩 cjsPreparseModuleExports 的坑）。host 分支永不
+  // 到达此文件——manifest 指向 SiftHost.cmd → host-main.js。
   void (async () => {
     try {
-      const { app, BrowserWindow, ipcMain } = await import('electron')
       const gotLock = app.requestSingleInstanceLock()
       if (!gotLock) {
         // 已有 UI 实例在运行；本实例直接退出（这不影响 host 模式——host 从不走此分支）。
@@ -71,10 +73,9 @@ if (isHost) {
         },
       })
       win.on('closed', () => app.quit())
-      await win.loadFile(join(app.getAppPath(), 'dist', 'ui', 'index.html'))
-      process.stderr.write('[sift] UI mode ready\n')
 
       // —— IPC 薄壳：结果一律 {ok,value}|{ok,message}，渲染层不因异常断线 ——
+      // 注册必须在 loadFile 之前：渲染层脚本一加载就会 invoke overview。
 
       const rootDir = resolveStoreRoot()
       const ok = <T>(value: T): { readonly ok: true; readonly value: T } => ({ ok: true, value })
@@ -97,27 +98,24 @@ if (isHost) {
           return fail(error)
         }
       })
-      ipcMain.handle('sift:ask-model', (_e, raw: unknown) => {
+      ipcMain.handle('sift:ask-model', async (_e, raw: unknown) => {
         try {
           const { projection } = raw as { projection: QuestionProjection }
           const config = loadModelConfig(process.env)
           if (config.status !== 'ok') {
-            return Promise.resolve(
-              ok({
-                status: 'model_unconfigured' as const,
-                missing: config.status === 'model_config_missing' ? config.missing : [],
-                reason: config.status === 'model_origin_rejected' ? config.reason : '',
-              }),
-            )
+            return ok({
+              status: 'model_unconfigured' as const,
+              missing: config.status === 'model_config_missing' ? config.missing : [],
+              reason: config.status === 'model_origin_rejected' ? config.reason : '',
+            })
           }
-          return askModel(rootDir, projection, config.config).then(result => {
-            if (result.status === 'failed') {
-              return ok({ status: 'failed' as const, code: result.result.code, message: result.result.message })
-            }
-            return ok({ status: 'ok' as const, answer: result.answer, answerPath: result.answerPath })
-          }, fail)
+          const result = await askModel(rootDir, projection, config.config)
+          if (result.status === 'failed') {
+            return ok({ status: 'failed' as const, code: result.result.code, message: result.result.message })
+          }
+          return ok({ status: 'ok' as const, answer: result.answer, answerPath: result.answerPath })
         } catch (error) {
-          return Promise.resolve(fail(error))
+          return fail(error)
         }
       })
       ipcMain.handle('sift:list-answers', () => listAnswers(rootDir).then(ok, fail))
@@ -125,6 +123,9 @@ if (isHost) {
         deleteSessionStoreData(rootDir, (raw as { sessionId: string }).sessionId).then(ok, fail))
       ipcMain.handle('sift:delete-all', () => deleteAllStoreData(rootDir).then(() => ok(undefined), fail))
       ipcMain.handle('sift:model-config', () => Promise.resolve(ok(modelConfigSummary(loadModelConfig(process.env)))))
+
+      await win.loadFile(join(app.getAppPath(), 'dist', 'ui', 'index.html'))
+      process.stderr.write('[sift] UI mode ready\n')
 
       // —— 概览刷新：5s 轮询 + focus 即刻刷新 ——
 

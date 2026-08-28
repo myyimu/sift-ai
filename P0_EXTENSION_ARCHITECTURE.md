@@ -69,6 +69,15 @@ P0 使用：
 - 新 origin 必须再次由用户主动授权；
 - P0 不申请 `tabs`、`history`、`webNavigation` 或 `<all_urls>`，避免为尚未验证的能力扩大权限和安装警告。
 
+> **批注（2026-08-28，已落地）**：manifest 新增 `commands` 键
+> （`sift-grant-current-tab`，`suggested_key` 默认 `Alt+Shift+S`，用户 2026-08-27 批准）
+> ——与点击工具栏 action 等价的键盘手势，command 手势同样授予 activeTab。
+> **permissions 数组零改动**（仍为上列 4 项）。SW 侧 `chrome.commands.onCommand` →
+> `tabs.query({active,lastFocusedWindow})` → 复用 action 点击同一 `handleActionClick`
+> 路径；query 无 url/tabId 时 warn 不动作（失败关闭）。选 `Alt+Shift+S` 为避开
+> Chrome 自身 `Ctrl+Shift+S` 截图工具；若与其他扩展冲突（chrome://extensions/shortcuts）
+> Chrome 不绑定该键，需用户手动确认一次。
+
 `chrome.tabs` 的非敏感事件可以在不声明 `tabs` 权限时使用；URL/title 等敏感字段只在当前 `activeTab` 授权有效时读取。
 
 ### 2.2 后续：站点级持续授权
