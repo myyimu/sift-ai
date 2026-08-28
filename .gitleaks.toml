@@ -1,0 +1,34 @@
+title = "Sift AI gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic credentials used only by redaction and fail-closed tests"
+paths = [
+  '''^apps/desktop/test/qa-service\.test\.ts$''',
+  '''^apps/extension/test/capture\.test\.ts$''',
+  '''^fixtures/pages/form-secrets\.html$''',
+  '''^fixtures/pages/script-style-heavy\.html$''',
+  '''^fixtures/sensitive/cases\.json$''',
+  '''^packages/model/test/fixtures\.ts$''',
+  '''^packages/shared/test/sanitize\.test\.ts$''',
+  '''^tools/e2e/run-full-chain-e2e\.mjs$''',
+  '''^RUNBOOK\.md$''',
+]
+
+[[allowlists]]
+description = "Chrome manifest SPKI public key used to keep the unpacked extension ID stable"
+paths = [
+  '''^apps/extension/public/manifest\.json$''',
+  '''^apps/extension/dist/manifest\.json$''',
+]
+
+[[allowlists]]
+description = "Ignored generated Electron/Chrome artifacts; source and history are scanned separately"
+paths = [
+  '''^apps/desktop/(?:pack[0-9]*|win-unpacked)/''',
+  '''^tools/\.cache/''',
+  '''^node_modules/''',
+  '''^dist/''',
+]

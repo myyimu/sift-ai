@@ -4,6 +4,19 @@
   "type": "module",
   "version": "0.1.0",
   "description": "Sift AI — read-only browser observer (P0 demo). Root scripts only; implementation lives in apps/ and packages/.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/myyimu/sift-ai.git"
+  },
+  "homepage": "https://github.com/myyimu/sift-ai#readme",
+  "bugs": {
+    "url": "https://github.com/myyimu/sift-ai/issues"
+  },
+  "engines": {
+    "node": ">=22.23.0 <27",
+    "pnpm": ">=10.14.0 <11"
+  },
   "scripts": {
     "lint": "eslint .",
     "lint:ast": "eslint apps/extension/src",

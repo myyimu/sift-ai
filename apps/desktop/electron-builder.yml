@@ -30,6 +30,3 @@ win:
   # Demo 不签名、不发布；跳过 rcedit/签名工具链（避免拉取 winCodeSign——
   # 其解压包含 darwin symlink，在无符号链接权限的 Windows 上会失败）。
   signAndEditExecutable: false
-electronDownload:
-  # 与 .npmrc 的 electron_mirror 保持一致（双保险：命令行环境缺 npm config 时兜底）
-  mirror: https://npmmirror.com/mirrors/electron/

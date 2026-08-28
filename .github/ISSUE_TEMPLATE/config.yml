@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/myyimu/sift-ai/security/advisories/new
+    about: Report capture-boundary, secret-exposure, renderer, IPC, or other security issues privately.
+  - name: Scope and contribution guide
+    url: https://github.com/myyimu/sift-ai/blob/master/CONTRIBUTING.md
+    about: Read the P0 boundary and contribution requirements before proposing a feature.

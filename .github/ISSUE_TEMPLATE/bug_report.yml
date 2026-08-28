@@ -1,0 +1,66 @@
+name: Bug report
+description: Report a reproducible non-security problem using synthetic data.
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report vulnerabilities or include real captured page content, credentials, browsing data, or private URLs here. Use the private process in SECURITY.md.
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: Commit hash or version tested.
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Extension authorization/capture
+        - Native Messaging transport/host
+        - Local store
+        - Projection/coverage
+        - Model adapter/answer validation
+        - Desktop UI
+        - Build/tooling/documentation
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Windows, Chrome, Node.js, and pnpm versions. Do not paste secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Synthetic reproduction
+      description: Minimal steps using repository fixtures or newly written synthetic content.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Data hygiene
+      options:
+        - label: I removed credentials, personal data, browsing data, private URLs, and real captured page content.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

@@ -2,6 +2,11 @@
   "name": "@sift/desktop",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
+  "description": "Sift AI P0 desktop UI and Chrome Native Messaging host.",
+  "author": "Sift AI contributors",
+  "homepage": "https://github.com/myyimu/sift-ai#readme",
+  "packageManager": "pnpm@10.14.0",
   "type": "module",
   "main": "dist/main.cjs",
   "scripts": {
@@ -19,8 +24,9 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "electron": "^33.3.0",
-    "electron-builder": "^25.1.8",
+    "electron": "44.0.0",
+    "electron-builder": "26.15.3",
+    "electron-builder-squirrel-windows": "26.15.3",
     "esbuild": "^0.25.0"
   }
 }
