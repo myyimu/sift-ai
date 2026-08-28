@@ -3,6 +3,7 @@
 // 经过主进程 qa-service（store 只读摘要 / 投影 / 答案），不含 API key。
 import { contextBridge, ipcRenderer } from 'electron'
 import type { StoreOverview, BuildProjectionResult, StoredAnswerSummary } from '../qa-service'
+import type { ModelConfigSummary } from '@sift/model'
 import type { QuestionProjection } from '@sift/shared'
 
 export interface IpcFail {
@@ -24,8 +25,9 @@ export interface SiftBridge {
   askModel(projection: QuestionProjection): Promise<IpcResult<AskModelIpc>>
   listAnswers(): Promise<IpcResult<readonly StoredAnswerSummary[]>>
   deleteSession(sessionId: string): Promise<IpcResult<{ removedObservations: number; removedPages: number; removedBlobs: number }>>
+  deletePage(pageInstanceId: string): Promise<IpcResult<{ removedObservations: number; removedPages: number; removedBlobs: number }>>
   deleteAll(): Promise<IpcResult<undefined>>
-  modelConfig(): Promise<IpcResult<{ configured: boolean; origin: string; model: string; contextWindow: number }>>
+  modelConfig(): Promise<IpcResult<ModelConfigSummary>>
   onOverviewUpdated(cb: () => void): void
 }
 
@@ -39,9 +41,10 @@ const bridge: SiftBridge = {
   listAnswers: () => ipcRenderer.invoke('sift:list-answers') as Promise<IpcResult<readonly StoredAnswerSummary[]>>,
   deleteSession: sessionId =>
     ipcRenderer.invoke('sift:delete-session', { sessionId }) as Promise<IpcResult<{ removedObservations: number; removedPages: number; removedBlobs: number }>>,
+  deletePage: pageInstanceId =>
+    ipcRenderer.invoke('sift:delete-page', { pageInstanceId }) as Promise<IpcResult<{ removedObservations: number; removedPages: number; removedBlobs: number }>>,
   deleteAll: () => ipcRenderer.invoke('sift:delete-all') as Promise<IpcResult<undefined>>,
-  modelConfig: () =>
-    ipcRenderer.invoke('sift:model-config') as Promise<IpcResult<{ configured: boolean; origin: string; model: string; contextWindow: number }>>,
+  modelConfig: () => ipcRenderer.invoke('sift:model-config') as Promise<IpcResult<ModelConfigSummary>>,
   onOverviewUpdated: cb => ipcRenderer.on('sift:overview-updated', () => cb()),
 }
 

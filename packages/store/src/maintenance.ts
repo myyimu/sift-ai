@@ -12,6 +12,7 @@
 import { readdir, rename, rm, rmdir, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ObservationEnvelope } from '@sift/shared'
+import { TTL_DAYS } from '@sift/shared/limits'
 import { openSiftStore, SiftStoreError } from './fs-store'
 
 export interface SessionDeleteReport {
@@ -41,7 +42,7 @@ function hexOf(hash: string): string {
  * 删除一个 session 的全部观察数据。session 不存在 → 幂等空操作（不报错）。
  * store_corrupt 会原样抛出（删除不以牺牲完整性检查为代价）。
  */
-export async function deleteSessionData(rootDir: string, sessionId: string): Promise<SessionDeleteReport> {
+async function deleteRows(rootDir: string, shouldRemove: (row: ObservationEnvelope) => boolean): Promise<SessionDeleteReport> {
   const store = await openSiftStore({ rootDir, readOnly: true })
   let rows: readonly ObservationEnvelope[]
   try {
@@ -50,11 +51,11 @@ export async function deleteSessionData(rootDir: string, sessionId: string): Pro
     await store.close()
   }
 
-  const removed = rows.filter(r => r.sessionId === sessionId)
+  const removed = rows.filter(shouldRemove)
   if (removed.length === 0) {
     return { removedObservations: 0, removedPages: 0, removedBlobs: 0 }
   }
-  const keep = rows.filter(r => r.sessionId !== sessionId)
+  const keep = rows.filter(r => !shouldRemove(r))
 
   // 1) journal 重写：tmp + 原子 rename（被 host 句柄占用 → store_busy）
   const journalPath = join(rootDir, 'observations.jsonl')
@@ -110,6 +111,24 @@ export async function deleteSessionData(rootDir: string, sessionId: string): Pro
     await rmdir(join(rootDir, 'blobs', shard)).catch(() => undefined)
   }
   return { removedObservations: removed.length, removedPages, removedBlobs }
+}
+
+export async function deleteSessionData(rootDir: string, sessionId: string): Promise<SessionDeleteReport> {
+  return deleteRows(rootDir, row => row.sessionId === sessionId)
+}
+
+/** 删除单个 pageInstance；与 Session 删除使用同一 journal/blob 引用回收路径。 */
+export async function deletePageData(rootDir: string, pageInstanceId: string): Promise<SessionDeleteReport> {
+  return deleteRows(rootDir, row => row.pageInstanceId === pageInstanceId)
+}
+
+/** 启动时回收超过 TTL 的捕获事实；无法解析时间戳时保守保留（失败关闭方向）。 */
+export async function pruneExpiredData(rootDir: string, now = new Date()): Promise<SessionDeleteReport> {
+  const cutoff = now.getTime() - TTL_DAYS * 24 * 60 * 60 * 1000
+  return deleteRows(rootDir, row => {
+    const receivedAt = Date.parse(row.receivedAt)
+    return Number.isFinite(receivedAt) && receivedAt < cutoff
+  })
 }
 
 /**

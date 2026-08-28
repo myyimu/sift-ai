@@ -1,8 +1,8 @@
 // 渲染层（原生 DOM，无框架）。纪律：
 //  - 一切动态文本走 textContent——投影块/模型回答是不可信数据，永不 innerHTML；
-//  - 状态词表只用 store 可推导子集（本地存储未连接/已保存到本地/正在生成问题投影/
-//    等待远程处理确认/正在回答/回答或引用校验失败/模型未配置）。授权/捕获类状态
-//    是扩展侧事实，UI↔扩展无通道，不伪造；
+//  - 状态词表只用 store 可推导子集（本地存储未连接/正在捕获/观察已暂停/捕获失败/
+//    跨域后需要重新授权/已保存到本地/正在生成问题投影/等待远程处理确认/正在回答/
+//    回答或引用校验失败/模型未配置）；授权/捕获类状态只来自已落盘控制事件，不伪造；
 //  - 确认发送前零模型调用：buildProjection 全程本地，网络只发生在"确认发送"之后。
 import './styles.css'
 import { renderCoverageSummary } from '@sift/shared'
@@ -48,6 +48,7 @@ const answerLimitationsEl = $('answer-limitations')
 const answerAnalyzerEl = $('answer-analyzer')
 const answersListEl = $('answers-list')
 const deleteSessionButton = $('delete-session-button') as HTMLButtonElement
+const deletePageButton = $('delete-page-button') as HTMLButtonElement
 const deleteAllButton = $('delete-all-button') as HTMLButtonElement
 const deleteReportEl = $('delete-report')
 
@@ -89,11 +90,26 @@ async function refreshOverview(): Promise<void> {
   const result = await bridge.overview()
   if (result.ok) {
     overview = result.value
-    const last = result.value.pages.length > 0 ? result.value.pages[result.value.pages.length - 1]!.lastEventReceivedAt : ''
-    setStatus(result.value.pages.length > 0 ? '已保存到本地' : '本地存储未连接', result.value.pages.length > 0 ? 'ok' : 'err')
+    const latest = result.value.pages.reduce<(typeof result.value.pages)[number] | null>(
+      (current, page) => current === null || page.lastEventReceivedAt > current.lastEventReceivedAt ? page : current,
+      null,
+    )
+    const status = latest?.lastEventType === 'capture_paused'
+      ? ['观察已暂停', 'busy'] as const
+      : latest?.lastEventType === 'capture_failed'
+        ? ['页面不受支持或超过 Demo 上限', 'err'] as const
+        : latest?.lastEventType === 'authorization_revoked'
+          ? ['跨域后需要重新授权', 'err'] as const
+          : latest?.lastEventType === 'document_started' || latest?.lastEventType === 'capture_resumed'
+            ? ['正在捕获', 'busy'] as const
+            : result.value.pages.length > 0
+              ? ['已保存到本地', 'ok'] as const
+              : ['未授权当前页面', 'busy'] as const
+    setStatus(status[0], status[1])
+    const last = latest?.lastEventReceivedAt ?? ''
     storeMetaEl.textContent = `${result.value.sessions.length} 个 session · ${result.value.pages.length} 个 page${last === '' ? '' : ` · 最近事件 ${last}`}`
     modelMetaEl.textContent = result.value.modelConfig.configured
-      ? `模型：${result.value.modelConfig.origin} · ${result.value.modelConfig.model} · ctx≈${result.value.modelConfig.contextWindow}`
+      ? `模型：${result.value.modelConfig.baseUrl} · ${result.value.modelConfig.model} · ctx≈${result.value.modelConfig.contextWindow}`
       : '模型未配置（SIFT_MODEL_BASE_URL/API_KEY/ID/CTX）'
     renderScopeOptions()
     updateActionEnabled()
@@ -107,6 +123,7 @@ async function refreshOverview(): Promise<void> {
 function updateActionEnabled(): void {
   buildButton.disabled = questionInput.value.trim() === '' || scopeSelect.value === ''
   deleteSessionButton.disabled = !scopeSelect.value.startsWith('session:')
+  deletePageButton.disabled = !scopeSelect.value.startsWith('page:')
 }
 
 // —— 投影与确认 ——
@@ -145,7 +162,7 @@ async function onBuild(): Promise<void> {
   previewStatsEl.textContent = `将发送：${value.preview.pages} 页 · ${value.preview.blocks} 块 · ${value.preview.utf8Bytes} 字节 · ≈${value.preview.estimatedTokens} tokens · 全量不截断`
   const model = await bridge.modelConfig()
   previewModelEl.textContent = model.ok && model.value.configured
-    ? `接收方：${model.value.origin} · 模型 ${model.value.model}（确认前不会发起任何网络请求）`
+    ? `接收方：${model.value.baseUrl} · 模型 ${model.value.model}（确认前不会发起任何网络请求）`
     : '模型未配置——可预览，但无法发送'
   while (previewBlocksEl.firstChild !== null) previewBlocksEl.removeChild(previewBlocksEl.firstChild)
   for (const block of value.projection.blocks.slice(0, 30)) {
@@ -270,6 +287,18 @@ async function onDeleteSession(): Promise<void> {
   await refreshOverview()
 }
 
+async function onDeletePage(): Promise<void> {
+  const scopeRaw = scopeSelect.value
+  if (!scopeRaw.startsWith('page:')) return
+  const pageInstanceId = scopeRaw.slice('page:'.length)
+  deletePageButton.disabled = true
+  const result = await bridge.deletePage(pageInstanceId)
+  deleteReportEl.textContent = result.ok
+    ? `已删除 ${result.value.removedObservations} 条观察、${result.value.removedPages} 个 page-state、${result.value.removedBlobs} 个 blob 及关联答案`
+    : result.message
+  await refreshOverview()
+}
+
 let deleteAllArmed = false
 async function onDeleteAll(): Promise<void> {
   if (!deleteAllArmed) {
@@ -298,9 +327,10 @@ confirmButton.addEventListener('click', () => void onConfirm())
 cancelButton.addEventListener('click', () => {
   previewSection.hidden = true
   projection = null
-  setStatus('已保存到本地', 'ok')
+  void refreshOverview()
 })
 deleteSessionButton.addEventListener('click', () => void onDeleteSession())
+deletePageButton.addEventListener('click', () => void onDeletePage())
 deleteAllButton.addEventListener('click', () => void onDeleteAll())
 questionInput.addEventListener('input', updateActionEnabled)
 scopeSelect.addEventListener('change', updateActionEnabled)

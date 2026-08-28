@@ -9,7 +9,7 @@
   3. 允许在 ADR-001 E-04 与 P0_DEMO_SCOPE §2.3 添加批注（已添加）。
 - **批准限制（持续生效）**：
   1. host 进程是 store 的**唯一写者**（UI/工具只读 dump），无跨进程写锁协议；
-  2. 不做自动 TTL 清理（达到配额时暂停新捕获并要求用户删除，同 P0_DEMO_SCOPE §2.3）；
+  2. 只在 Host 启动且尚未取得 journal 写句柄时自动回收超过 7 天的捕获；UI 启动时回收超过 7 天的派生答案；
   3. 引擎替换为 SQLite 属后续独立决策，需新 ADR。
 - **日期：2026-08-27**
 - **关联：ADR-001_DEMO_ENGINEERING.md（E-04，已批注）、P0_DEMO_SCOPE.md §2.3（已批注）**
@@ -54,7 +54,7 @@ root 默认 `%LOCALAPPDATA%\Sift\store`（Windows），`SIFT_STORE_ROOT`
 | 幂等检查（commit ack 的 deduplicated） | 打开时扫 journal 建 `id → payloadHash` 索引；同 id 同 hash → deduplicated；同 id 异 hash → hash_mismatch 失败关闭 |
 | refCount / reconciliation | 打开时扫 journal 重建每 blob 引用计数；孤儿 blob（rename 后崩溃）容忍并记账，不自动删除（保守） |
 | store_corrupt 失败关闭 | journal 断尾（末行不完整）→ 截断恢复；中段坏行 / 引用 blob 缺失或 hash 不符 → 拒绝打开 |
-| TTL 7 天 / Session 250 MiB / 全局 1 GiB 配额复核 | meta.json 记账，append 前复核，超限 → QuotaExceeded（错误码 quota_exceeded，host 失败关闭，SW 暂停捕获） |
+| TTL 7 天 / Session 250 MiB / 全局 1 GiB 配额复核 | Host 启动时先回收过期行与不可达 blob；append 前复核配额，超限 → QuotaExceeded（错误码 quota_exceeded，host 失败关闭，SW 暂停捕获） |
 | 表结构（observations/page_states/sessions/blobs/blob_refs/projections） | journal 行 = observations；page-states/*.json = page_states；blobs 目录 = blobs；引用计数在内存 + 打开时重建；sessions/projections 表暂无消费者，后置 |
 
 ## 4. 一致性模型与恢复

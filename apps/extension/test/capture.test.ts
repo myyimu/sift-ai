@@ -96,6 +96,19 @@ describe('capture：九类夹具', () => {
     expect(html).toContain('href="https://example.com/normal/path"')
   })
 
+  it('relative-links：相对 href/src 先按页面 URL 解析为绝对安全地址', () => {
+    const { document } = parseHTML(`<html><body><main><p>${'x'.repeat(100)}</p><a href="/docs/guide">指南</a><img src="../img/diagram.png" alt="图示"></main></body></html>`)
+    const outcome = captureDomSnapshot(document, {
+      url: 'https://example.com/articles/current?id=1',
+      title: '相对链接',
+      contentEpoch: 0,
+      reason: 'initial_readable',
+    })
+    const { payload } = expectOk(outcome)
+    expect(payload.html).toContain('href="https://example.com/docs/guide"')
+    expect(payload.html).toContain('src="https://example.com/img/diagram.png"')
+  })
+
   it('traversal-title：标题的路径保留字符全部替换', () => {
     const { payload } = expectOk(capture('traversal-title.html'))
     expect(payload.title).not.toMatch(/[/\\:*?"<>|]/)

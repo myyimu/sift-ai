@@ -74,7 +74,7 @@ Demo 默认使用 SQLite 保存结构化索引和状态，压缩后的内容寻�
 > **批注（2026-08-27，用户批准）**：P0 最小捕获闭环阶段，存储引擎由
 > [ADR-003](ADR-003_STORE_FILE_SYSTEM.md) 取代为纯文件系统实现（blob 目录 +
 > JSONL journal + page-state JSON）。TTL/配额/幂等/原子性等**行为语义不变**；
-> SQLite 引擎在出现第二个写者或投影查询需求时按 ADR-003 §5 退出条件另行决策。
+> SQLite 引擎在出现第二个写者或投影查询需求时按 ADR-003 §5 退出条件另行决策；Host 启动和 UI 启动分别执行 7 天 TTL 回收。
 
 ### 2.4 Demo Evidence 投影
 
@@ -206,6 +206,14 @@ Demo 尚未完成真实登录态数据的本地加密与密钥管理，因此：
 > origin 与 model；用户确认前模型调用次数为零（全链 E2E 断言 mock 恰好 1 次请求，
 > degrade 恰好 2 次）；coverage 摘要（`renderCoverageSummary`）同时进入 system prompt
 > 与 UI 回答顶部。真实 provider 冒烟留给用户手动（RUNBOOK §1/§5.6 记录 env 配置法）。
+>
+> **批注补充（2026-08-28，用户授权放宽）**：E-06 原"baseUrl 必须纯 origin"规则
+> 挡住了国内 OpenAI 兼容端点（阿里百炼等普遍要求固定 basePath），用户明确提出
+> 接百炼需求后放宽为：允许**固定静态 basePath**（段仅限字母/数字/`._~-`，禁
+> query/fragment/userinfo/`..`，尾斜杠规范化）。透明性不降级：完整 baseUrl
+> （origin+path）必须显示在 UI 确认屏与顶栏摘要（`ModelConfigSummary.baseUrl`
+> 携带完整地址），与"防 Key 发往未预览位置"的原意图一致——见
+> `packages/model/src/config.ts` 头注与 config.test.ts。
 
 ## 4. 明确降级到 P0.5
 

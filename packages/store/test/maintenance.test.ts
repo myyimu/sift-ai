@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ObservationEnvelope } from '@sift/shared'
 import { CAPTURE_VERSION, REDACTION_POLICY } from '@sift/shared/wire'
 import { openSiftStore, SiftStoreError, type SiftFsStore } from '../src/fs-store'
-import { deleteAllData, deleteSessionData } from '../src/maintenance'
+import { deleteAllData, deleteSessionData, pruneExpiredData } from '../src/maintenance'
 
 function sha256Of(bytes: Uint8Array): string {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
@@ -152,6 +152,28 @@ describe('deleteSessionData', () => {
 
     const after = await readFile(join(root, 'observations.jsonl'), 'utf8')
     expect(after).toBe(before) // 失败不留半文件
+  })
+})
+
+describe('pruneExpiredData', () => {
+  it('只回收 TTL 前的观察及其不可达 blob，保留近期观察', async () => {
+    writer = await openSiftStore({ rootDir: root })
+    const oldPayload = grantedPayload('https://old.example')
+    const newPayload = grantedPayload('https://new.example')
+    await append(writer, { id: 'old', sessionId: 'old-session', pageInstanceId: 'old-page', receivedAt: '2026-08-01T00:00:00.000Z', type: 'authorization_granted' }, oldPayload)
+    await append(writer, { id: 'new', sessionId: 'new-session', pageInstanceId: 'new-page', receivedAt: '2026-08-27T00:00:00.000Z', type: 'authorization_granted' }, newPayload)
+    await writer.close()
+    writer = null
+
+    const report = await pruneExpiredData(root, new Date('2026-09-01T00:00:00.000Z'))
+    expect(report.removedObservations).toBe(1)
+    const reader = await openSiftStore({ rootDir: root, readOnly: true })
+    try {
+      expect((await reader.readJournal()).map(row => row.id)).toEqual(['new'])
+      expect((await reader.listSessions()).map(session => session.sessionId)).toEqual(['new-session'])
+    } finally {
+      await reader.close()
+    }
   })
 })
 

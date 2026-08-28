@@ -31,6 +31,11 @@ interface TabGrant {
   pageInstanceId: string
   grantedOrigin: string
   nextSequence: number
+  /** 当前 document 的 CS 实例；SW 重启后从 storage.session 恢复。 */
+  instanceNonce?: string
+  /** tabs.onUpdated 已确认新 document，等待新 CS 首个 document_started。 */
+  navigationPending?: boolean
+  paused?: boolean
 }
 
 interface SwState {
@@ -164,8 +169,10 @@ async function handleActionClick(tab: chrome.tabs.Tab): Promise<void> {
 
   const existing = grants.get(tabKey)
   if (existing !== undefined && existing.grantedOrigin === origin) {
-    // 同源重复点击：幂等——只确保 CS 在场（CS 自带防重复注入哨兵）
-    await injectContentScript(tab.id)
+    // 已授权页面的再次手势切换暂停/恢复；首次点击仍走下方授权+注入路径。
+    const state = await loadState()
+    if (state === null) return
+    await setCapturePaused(tab.id, state.sessionId, existing, existing.paused !== true, urlResult.safeUrl)
     return
   }
   if (existing !== undefined) {
@@ -177,6 +184,7 @@ async function handleActionClick(tab: chrome.tabs.Tab): Promise<void> {
     pageInstanceId: `p-${crypto.randomUUID()}`,
     grantedOrigin: origin,
     nextSequence: 0,
+    navigationPending: false,
   }
   grants.set(tabKey, grant)
 
@@ -191,7 +199,60 @@ async function handleActionClick(tab: chrome.tabs.Tab): Promise<void> {
     payloadJson: controlPayloadJson({ kind: 'authorization_granted', url: urlResult.safeUrl, reason: 'user_gesture', origin }),
   })
   await chrome.action.setBadgeText({ tabId: tab.id, text: 'S' })
-  await injectContentScript(tab.id)
+  try {
+    await injectContentScript(tab.id)
+  } catch {
+    // executeScript 失败时不能留下“已授权”假状态；保留已排队的 granted，
+    // 追加配对的 injection_failed 撤销事件，Host 侧按顺序落盘。
+    await revokeGrant(tab.id, 'injection_failed', urlResult.safeUrl)
+  }
+}
+
+async function setCapturePaused(
+  tabId: number,
+  sessionId: string,
+  grant: TabGrant,
+  paused: boolean,
+  safeUrl: string,
+): Promise<void> {
+  grant.paused = paused
+  if (!paused) {
+    // 暂停期间若发生了新 document，旧 CS 已不存在；恢复时允许一次固定脚本注入，
+    // document_started 会在 navigationPending 下建立新的 pageInstanceId。
+    grant.navigationPending = true
+  }
+  await saveState({ sessionId, tabs: grantsSnapshot() })
+  await chrome.action.setBadgeText({ tabId, text: paused ? 'P' : 'S' }).catch(() => {})
+  if (!paused) {
+    try {
+      await injectContentScript(tabId)
+    } catch {
+      await revokeGrant(tabId, 'injection_failed', safeUrl)
+      return
+    }
+  }
+  await sendPauseToContentScript(tabId, paused)
+  await emit({
+    tabId,
+    grant,
+    sessionId,
+    type: paused ? 'capture_paused' : 'capture_resumed',
+    source: 'extension',
+    url: safeUrl,
+    contentEpoch: 0,
+    payloadJson: controlPayloadJson({ kind: paused ? 'capture_paused' : 'capture_resumed' }),
+  })
+}
+
+async function sendPauseToContentScript(tabId: number, paused: boolean): Promise<void> {
+  try {
+    const sendMessage = (chrome.tabs as typeof chrome.tabs & { sendMessage?: (id: number, message: unknown) => Promise<unknown> }).sendMessage
+    if (typeof sendMessage === 'function') {
+      await sendMessage.call(chrome.tabs, tabId, { sift: 1, kind: 'set_paused', paused })
+    }
+  } catch {
+    // content script 可能已因导航销毁；状态仍按用户手势持久化，重注入时会恢复。
+  }
 }
 
 async function injectContentScript(tabId: number): Promise<void> {
@@ -202,8 +263,8 @@ async function injectContentScript(tabId: number): Promise<void> {
   })
 }
 
-/** 跨源/关Tab 撤销：清授权 + authorization_revoked 事件 + badge 清除（两种 reason 都清）。 */
-async function revokeGrant(tabId: number, reason: 'cross_origin' | 'tab_closed', url: string): Promise<void> {
+/** 跨源/关Tab/注入失败撤销：清授权 + authorization_revoked 事件 + badge 清除。 */
+async function revokeGrant(tabId: number, reason: 'cross_origin' | 'tab_closed' | 'injection_failed', url: string): Promise<void> {
   const tabKey = String(tabId)
   const grant = grants.get(tabKey)
   if (grant === undefined) return
@@ -254,6 +315,16 @@ async function handleNavigationComplete(tabId: number): Promise<void> {
   hydrateGrants(state)
   const grant = grants.get(String(tabId))
   if (grant === undefined) return // 未授权 tab 的导航：不产生任何观察
+  // 只在确认新 document 的重注入窗口内换代。初次 action 授权不设 pending，
+  // 因而首个 document_started 不会无谓创建第二个 pageInstanceId。
+  grant.navigationPending = true
+  await saveState({ sessionId: state.sessionId, tabs: grantsSnapshot() })
+  if (grant.paused === true) {
+    // 暂停态不向新 document 注入观察器；恢复手势会重新注入并换代。
+    grant.navigationPending = false
+    await saveState({ sessionId: state.sessionId, tabs: grantsSnapshot() })
+    return
+  }
   try {
     await injectContentScript(tabId) // 同源：CS 重注入（document_started 由 CS 上报）
   } catch {
@@ -294,8 +365,26 @@ async function handleCsMessage(
     return
   }
 
+  // 暂停状态保存在 storage.session；SW 重启后旧 CS 可能仍短暂存活，
+  // 入口侧再次拦截其内容/失败消息，避免暂停被 SW 生命周期绕过。
+  if (grant.paused === true && msg.kind !== 'document_started') return
+
   switch (msg.kind) {
     case 'document_started': {
+      if (typeof msg.instanceNonce !== 'string' || msg.instanceNonce.length < 1 || msg.instanceNonce.length > 64) return
+      const previousNonce = grant.instanceNonce
+      const isNewDocument = previousNonce !== undefined && previousNonce !== msg.instanceNonce
+      if (isNewDocument && grant.navigationPending !== true) {
+        // 已换代的旧 CS 延迟消息不能重新夺回当前页面身份。
+        return
+      }
+      if (isNewDocument) {
+        grant.pageInstanceId = `p-${crypto.randomUUID()}`
+        grant.nextSequence = 0
+      }
+      grant.instanceNonce = msg.instanceNonce
+      grant.navigationPending = false
+      await saveState({ sessionId: state.sessionId, tabs: grantsSnapshot() })
       await emit({
         tabId,
         grant,
@@ -309,12 +398,14 @@ async function handleCsMessage(
           url: sanitizeUrl(msg.url ?? '').safeUrl || grant.grantedOrigin,
           ...(typeof msg.title === 'string' ? { title: msg.title } : {}),
           instanceNonce: msg.instanceNonce,
-          sameOriginReinject: false,
+          sameOriginReinject: isNewDocument,
         }),
       })
       return
     }
     case 'dom_snapshot': {
+      if (typeof msg.instanceNonce !== 'string' || msg.instanceNonce.length < 1 || msg.instanceNonce.length > 64) return
+      if (grant.instanceNonce !== undefined && grant.instanceNonce !== msg.instanceNonce) return
       if (typeof msg.payloadJson !== 'string' || typeof msg.url !== 'string') return
       const urlResult = sanitizeUrl(msg.url)
       if (urlResult.denied) {
@@ -336,6 +427,8 @@ async function handleCsMessage(
     case 'capture_failed': {
       // spec §9：持久化 {kind, code, instanceNonce, contentEpoch}——无 detail、无页面内容。
       // detail 只走 console（本地化自由文本不进 hash 稳定数据）。Grant 保留（失败 ≠ 授权结束）。
+      if (typeof msg.instanceNonce !== 'string' || msg.instanceNonce.length < 1 || msg.instanceNonce.length > 64) return
+      if (grant.instanceNonce !== undefined && grant.instanceNonce !== msg.instanceNonce) return
       if (typeof msg.code !== 'string') return
       console.warn(`[sift] capture_failed（${msg.instanceNonce}/${msg.code}）：${msg.detail ?? ''}`)
       const failUrlResult = sanitizeUrl(msg.url ?? sender.tab?.url ?? '')

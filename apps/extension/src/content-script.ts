@@ -55,12 +55,57 @@ const sentinel = window as { __siftCsActive?: boolean }
 function startObserving(): void {
   const instanceNonce = crypto.randomUUID()
   let contentEpoch = 0
+  let readableTimer: ReturnType<typeof setInterval> | null = null
+  let stopped = false
+  let paused = false
+  let lastSeenUrl = location.href
+
+  // 扩展上下文失效（扩展被重载/更新，旧 CS 残留在已打开页面）：观察必须立即停止，
+  // 并释放幂等哨兵——否则之后重新授权注入的新 CS 会被旧哨兵挡住，观察静默死亡。
+  // 上报失败的其他形态（如 SW 未唤醒）不停机，只有 context invalidated 是不可恢复的。
+  function shutdown(): void {
+    if (stopped) return
+    stopped = true
+    if (readableTimer !== null) clearInterval(readableTimer)
+    gate.cancel()
+    observer.disconnect()
+    const runtimeOnMessage = (chrome.runtime as typeof chrome.runtime & {
+      onMessage?: { removeListener(listener: (message: unknown) => boolean): void }
+    }).onMessage
+    runtimeOnMessage?.removeListener(onControlMessage)
+    window.removeEventListener('popstate', onSpaNav)
+    window.removeEventListener('hashchange', onSpaNav)
+    sentinel.__siftCsActive = false
+    console.info('[sift] 扩展上下文已失效（扩展重载/更新），本页观察停止；重新授权可注入新实例')
+  }
+
+  function isContextInvalidated(error: unknown): boolean {
+    return error instanceof Error && error.message.includes('Extension context invalidated')
+  }
 
   const report = (message: CsMessage): void => {
-    void chrome.runtime.sendMessage(message)
+    if (stopped) return
+    try {
+      const sent = chrome.runtime.sendMessage(message) as unknown
+      // MV3 返回 promise：rejection 形态的失效也要落到同一停机路径
+      if (sent !== undefined && typeof (sent as Promise<unknown>).catch === 'function') {
+        ;(sent as Promise<unknown>).catch((error: unknown) => {
+          if (isContextInvalidated(error)) shutdown()
+        })
+      }
+    } catch (error) {
+      if (isContextInvalidated(error)) shutdown()
+    }
   }
 
   const captureNow = (reason: 'initial_readable' | 'mutation_merged'): void => {
+    if (stopped || paused) return
+    // pushState/replaceState 不触发 popstate；在每次完整快照前比较 URL，
+    // 把这类同文档路由纳入新的 contentEpoch，而不改写页面 history API。
+    if (location.href !== lastSeenUrl) {
+      contentEpoch += 1
+      lastSeenUrl = location.href
+    }
     const outcome = captureDomSnapshot(document, {
       url: location.href,
       title: document.title,
@@ -109,9 +154,11 @@ function startObserving(): void {
       waitedMs += READABLE_POLL_MS
       if (isReadable()) {
         clearInterval(timer)
+        readableTimer = null
         captureNow('initial_readable')
       } else if (waitedMs >= READABLE_WAIT_MS) {
         clearInterval(timer)
+        readableTimer = null
         report({
           sift: 1,
           kind: 'capture_failed',
@@ -123,11 +170,15 @@ function startObserving(): void {
         console.warn('[sift] readable-v1 超时：capture_too_little_content')
       }
     }, READABLE_POLL_MS)
+    readableTimer = timer
   }
 
   // SPA 同源导航：epoch 自增（popstate/hashchange 都视作同源软导航）
   const onSpaNav = (): void => {
-    contentEpoch += 1
+    if (location.href !== lastSeenUrl) {
+      contentEpoch += 1
+      lastSeenUrl = location.href
+    }
   }
   window.addEventListener('popstate', onSpaNav)
   window.addEventListener('hashchange', onSpaNav)
@@ -145,8 +196,45 @@ function startObserving(): void {
     childList: true,
     subtree: true,
     characterData: true,
-    attributes: false, // 属性变化不影响已捕获正文语义；降噪
+    // 白名单属性会进入快照或影响脱敏判定；其变化不能静默漏采。
+    attributes: true,
+    attributeFilter: ['href', 'src', 'alt', 'colspan', 'rowspan', 'class', 'id', 'role', 'contenteditable', 'hidden', 'aria-hidden'],
   })
+
+  function setPaused(next: boolean): void {
+    if (stopped || paused === next) return
+    paused = next
+    gate.cancel()
+    if (readableTimer !== null) {
+      clearInterval(readableTimer)
+      readableTimer = null
+    }
+    if (paused) {
+      observer.disconnect()
+      return
+    }
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['href', 'src', 'alt', 'colspan', 'rowspan', 'class', 'id', 'role', 'contenteditable', 'hidden', 'aria-hidden'],
+    })
+    captureNow('mutation_merged')
+  }
+
+  function onControlMessage(message: unknown): boolean {
+    if (typeof message !== 'object' || message === null || Array.isArray(message)) return false
+    const input = message as { sift?: unknown; kind?: unknown; paused?: unknown }
+    if (input.sift !== 1 || input.kind !== 'set_paused' || typeof input.paused !== 'boolean') return false
+    setPaused(input.paused)
+    return false
+  }
+
+  const runtimeOnMessage = (chrome.runtime as typeof chrome.runtime & {
+    onMessage?: { addListener(listener: (message: unknown) => boolean): void }
+  }).onMessage
+  runtimeOnMessage?.addListener(onControlMessage)
 
   // 注入即上报 document_started，然后等 readable-v1
   report({

@@ -7,6 +7,7 @@ import {
   base64ToBytes,
   bytesToBase64,
   chunkCountFor,
+  parseHostMessage,
   payloadMaxBytesFor,
 } from '../src/wire'
 import type { CaptureFailedPayload } from '../src/wire'
@@ -212,7 +213,7 @@ describe('payload schema', () => {
     ).toBe(false)
   })
 
-  it('payloadSchemaFor：5 种落地事件有 schema，其余返回 null（fail-closed）', () => {
+  it('payloadSchemaFor：7 种落地事件有 schema，其余返回 null（fail-closed）', () => {
     expect(payloadSchemaFor('dom_snapshot')).toBe(domSnapshotPayloadSchema)
     expect(payloadSchemaFor('authorization_granted')).toBe(authorizationGrantedPayloadSchema)
     expect(payloadSchemaFor('authorization_revoked')).not.toBeNull()
@@ -220,7 +221,17 @@ describe('payload schema', () => {
     expect(payloadSchemaFor('capture_failed')).not.toBeNull()
     expect(payloadSchemaFor('navigation_metadata_changed')).toBeNull()
     expect(payloadSchemaFor('dom_mutation_trigger')).toBeNull()
-    expect(payloadSchemaFor('capture_paused')).toBeNull()
+    expect(payloadSchemaFor('capture_paused')).not.toBeNull()
+    expect(payloadSchemaFor('capture_resumed')).not.toBeNull()
+  })
+})
+
+describe('parseHostMessage：service worker 侧零依赖运行时校验', () => {
+  it('接受合法回包，拒绝未知键、错误 hash 和版本字段', () => {
+    expect(parseHostMessage({ type: 'welcome', protocolVersion: 1, host: 'sift-demo-host', storeReady: true })).not.toBeNull()
+    expect(parseHostMessage({ type: 'welcome', protocolVersion: 1, host: 'sift-demo-host', storeReady: true, extra: 1 })).toBeNull()
+    expect(parseHostMessage({ type: 'commit_ack', transferId: 't-1', deduplicated: false, payloadHash: 'bad', stateVersion: 1, lastAppliedSequence: 1 })).toBeNull()
+    expect(parseHostMessage({ type: 'chunk_ack', transferId: 't-1', index: -1, receivedBytes: 1 })).toBeNull()
   })
 })
 

@@ -183,7 +183,19 @@ export interface AuthorizationRevokedPayload {
   readonly kind: 'authorization_revoked'
   readonly captureVersion: 'capture-v1'
   readonly url: string
-  readonly reason: 'cross_origin' | 'tab_closed' | 'port_error' | 'sw_shutdown'
+  readonly reason: 'cross_origin' | 'tab_closed' | 'injection_failed' | 'port_error' | 'sw_shutdown'
+}
+
+export interface CapturePausedPayload {
+  readonly schemaVersion: 1
+  readonly kind: 'capture_paused'
+  readonly captureVersion: 'capture-v1'
+}
+
+export interface CaptureResumedPayload {
+  readonly schemaVersion: 1
+  readonly kind: 'capture_resumed'
+  readonly captureVersion: 'capture-v1'
 }
 
 export interface DocumentStartedPayload {
@@ -225,6 +237,8 @@ export type CapturePayload =
   | DomSnapshotPayload
   | AuthorizationGrantedPayload
   | AuthorizationRevokedPayload
+  | CapturePausedPayload
+  | CaptureResumedPayload
   | DocumentStartedPayload
   | CaptureFailedPayload
 
@@ -298,4 +312,64 @@ export function base64ToBytes(text: string): Uint8Array {
     }
   }
   return out
+}
+
+// —— Host → Extension 轻量运行时校验 ——
+//
+// service worker 不能依赖 zod（wire.ts 必须保持零运行时依赖），但 native host 回包
+// 仍是不可信输入。此校验器覆盖 hostMessageSchema 的字段、类型、严格键集和基本范围；
+// transport 还会按当前状态校验 transferId/hash/version。
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const allowed = new Set(keys)
+  return Object.keys(value).every(key => allowed.has(key))
+}
+
+function isNonEmptyText(value: unknown, max = 128): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= max
+}
+
+function isNonNegativeInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+function isTransferId(value: unknown): value is string {
+  return isNonEmptyText(value, 128)
+}
+
+/** 返回 null 表示畸形 host 回包；不会抛异常。 */
+export function parseHostMessage(raw: unknown): HostMessage | null {
+  if (!isRecord(raw) || typeof raw.type !== 'string') return null
+  switch (raw.type) {
+    case 'welcome':
+      if (!hasOnlyKeys(raw, ['type', 'protocolVersion', 'host', 'storeReady']) ||
+        !isNonNegativeInt(raw.protocolVersion) || raw.host !== 'sift-demo-host' || typeof raw.storeReady !== 'boolean') return null
+      return raw as unknown as WelcomeMsg
+    case 'transfer_ack':
+      if (!hasOnlyKeys(raw, ['type', 'transferId', 'status']) || !isTransferId(raw.transferId) ||
+        (raw.status !== 'ok' && raw.status !== 'deduplicated')) return null
+      return raw as unknown as TransferAckMsg
+    case 'chunk_ack':
+      if (!hasOnlyKeys(raw, ['type', 'transferId', 'index', 'receivedBytes']) || !isTransferId(raw.transferId) ||
+        !isNonNegativeInt(raw.index) || !isNonNegativeInt(raw.receivedBytes)) return null
+      return raw as unknown as ChunkAckMsg
+    case 'commit_ack':
+      if (!hasOnlyKeys(raw, ['type', 'transferId', 'deduplicated', 'payloadHash', 'stateVersion', 'lastAppliedSequence']) ||
+        !isTransferId(raw.transferId) || typeof raw.deduplicated !== 'boolean' ||
+        typeof raw.payloadHash !== 'string' || !SHA256_HASH_PATTERN.test(raw.payloadHash) ||
+        !isNonNegativeInt(raw.stateVersion) || !isNonNegativeInt(raw.lastAppliedSequence)) return null
+      return raw as unknown as CommitAckMsg
+    case 'error':
+      if (!hasOnlyKeys(raw, ['type', 'transferId', 'code', 'message', 'fatal']) ||
+        (raw.transferId !== undefined && !isTransferId(raw.transferId)) ||
+        !isNonEmptyText(raw.message, 256) || raw.fatal !== true ||
+        !['protocol_version_mismatch', 'invalid_message', 'hash_mismatch', 'payload_oversized',
+          'sequence_violation', 'quota_exceeded', 'storage_error', 'internal_error'].includes(String(raw.code))) return null
+      return raw as unknown as ErrorMsg
+    default:
+      return null
+  }
 }

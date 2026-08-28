@@ -6,8 +6,8 @@
 //    → page-state tmp+rename 替换 → meta 刷新；
 //  - store_corrupt 失败关闭：journal 中段坏行 / 引用 blob 缺失或 hash 不符 /
 //    page-state 领先于 journal → 拒绝打开；断尾（末行不完整）→ 截断恢复；
-//  - TTL 7 天不自动清理（ADR-003 批准限制 #2）；Session 250MiB / 全局 1GiB
-//    配额在 append 前复核，超限抛 quota_exceeded；
+//  - TTL 7 天由 host 启动阶段清理；Session 250MiB / 全局 1GiB 配额在 append 前复核，
+//    超限抛 quota_exceeded；
 //  - host 进程是唯一写者；journal 是事实来源，page-state 落后时按 journal 重放补齐。
 //    读侧（UI/投影）经 openSiftStore({ readOnly: true }) 零写入共存：断尾内存容忍、
 //    blob 惰性重验、page-state 按 journal 重放（不补写文件）。
@@ -36,4 +36,4 @@ export {
   type PageStateGap,
   type SnapshotReplaceInfo,
 } from './page-state'
-export { deleteAllData, deleteSessionData, type SessionDeleteReport } from './maintenance'
+export { deleteAllData, deletePageData, deleteSessionData, pruneExpiredData, type SessionDeleteReport } from './maintenance'

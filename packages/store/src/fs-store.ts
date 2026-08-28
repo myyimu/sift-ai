@@ -12,7 +12,7 @@
 // 崩溃窗口（§4）：staging 孤儿打开时清；rename 后 journal 前孤儿 blob 容忍记账；
 //   journal 后 page-state 前靠重放恢复；journal 断尾截断；中段坏行/blob 缺失或
 //   hash 不符 → store_corrupt 拒绝打开。
-// host 是唯一写者（批准限制 #1）；不自动 TTL 清理（#2），TTL 常量仅记录。
+// host 是唯一写者；过期捕获由 host 在取得 journal 写句柄前清理，TTL 不会只停留在 meta 记录。
 import { createHash, randomUUID } from 'node:crypto'
 import { FileHandle, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'

@@ -157,6 +157,7 @@ completeAnswer(input: {
 - 传输：**OpenAI-compatible Chat Completions**（`baseUrl + apiKey + model` 全部来自进程环境变量：`SIFT_MODEL_BASE_URL` / `SIFT_MODEL_API_KEY` / `SIFT_MODEL_ID` / `SIFT_MODEL_CTX`）。不在本 ADR 押注单一厂商；任何兼容端点（OpenAI/DeepSeek/GLM/Moonshot/本地网关均可）只要支持结构化 JSON 输出即可作为开发期 provider。
 - JSON 约束两级：优先 `response_format: { type: 'json_schema', json_schema: { name: 'answer_projection', strict: true, schema: <AnswerProjection JSON Schema> } }`；端点明确不支持时降级 `{ type: 'json_object' }` 并把 schema 注入 system prompt。`promptVersion = answer-v1` 版本化。
 - `SIFT_MODEL_BASE_URL` 必须解析成固定 origin；远程端点只允许 `https:`，仅 `localhost`、`127.0.0.1`、`[::1]` 本地网关允许 `http:`。HTTP redirect 一律拒绝，避免 API Key 或投影被转发到未预览的 origin；实现上必须关闭 SDK 的自动重定向跟随（如 fetch `redirect: 'manual'`），任何 3xx 按失败处理。确认 UI 展示最终 provider origin、model 和数据范围。
+  - **修订（2026-08-28，用户授权）**：origin 规则放宽为 origin + **固定静态 basePath**（段仅限字母/数字/`._~-`，禁 query/fragment/userinfo/`..`）——纯 origin 规则挡住了国内兼容端点（百炼 `/compatible-models/v1` 等）。重定向拒绝、仅 https 等约束不变；透明性不降：完整 baseUrl（origin+path）必须显示在确认屏（`ModelConfigSummary.baseUrl`）。详见 P0_DEMO_SCOPE §3 批注补充。
 - 本地 zod 校验为最终关卡：非法 JSON、未知 blockId、空引用、重复 ID、超长字段、HTML/脚本输出 → 整次失败，允许一次确定性重试，仍失败按规范显示真实错误。**API Key 永不持久化、永不出现在日志与投影**（D-051）。
 
 ### Token 估算（确定性，进入 inputHash 语义）

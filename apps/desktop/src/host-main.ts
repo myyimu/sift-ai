@@ -16,7 +16,8 @@
 import { detectNativeHostLaunch } from '@sift/host/mode'
 import { runNativeHostLoop } from '@sift/host/host-loop'
 import { createCaptureProtocolHandler } from '@sift/host/capture-protocol'
-import { defaultStoreRoot, openSiftStore, type SiftFsStore } from '@sift/store'
+import { defaultStoreRoot, openSiftStore, pruneExpiredData, type SiftFsStore } from '@sift/store'
+import { mkdir } from 'node:fs/promises'
 
 // node 模式下 argv = [exe, host-main.js, origin, --parent-window=N]
 const launchOk = detectNativeHostLaunch(process.argv.slice(2), {
@@ -32,6 +33,9 @@ if (!launchOk) {
 const rootDir = defaultStoreRoot()
 let store: SiftFsStore | null = null
 try {
+  // Host 是唯一捕获写者；在取得 journal 句柄前回收过期捕获，避免与自身并发。
+  await mkdir(rootDir, { recursive: true })
+  await pruneExpiredData(rootDir)
   store = await openSiftStore({
     rootDir,
     onRecover: (message) => process.stderr.write(`[sift] store recover: ${message}\n`),

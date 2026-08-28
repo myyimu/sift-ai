@@ -11,12 +11,13 @@
 //  - API key 只进内存 config，任何摘要/答案/日志都不含它（D-051）；
 //  - 答案持久化 = <storeRoot>/../answers/<inputHash>.json（自包含 QuestionProjection
 //    + AnswerProjection；同 inputHash 覆盖 = spec §2.3 "可删除、可重建"）。
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import type { AnswerProjection, QuestionProjection } from '@sift/shared'
+import { TTL_DAYS } from '@sift/shared/limits'
 import { estimateTokens, utf8Bytes } from '@sift/shared/tokens'
 import { openSiftStore, defaultStoreRoot, type StorePageSummary, type StoreSessionSummary } from '@sift/store'
-import { deleteAllData, deleteSessionData, type SessionDeleteReport } from '@sift/store'
+import { deleteAllData, deletePageData, deleteSessionData, type SessionDeleteReport } from '@sift/store'
 import {
   projectQuestion,
   type ManifestFacts,
@@ -278,10 +279,68 @@ export async function listAnswers(rootDir: string): Promise<readonly StoredAnswe
   return summaries.sort((a, b) => (a.completedAt < b.completedAt ? 1 : -1))
 }
 
+/** UI 启动时清理过期派生答案；损坏文件保守保留，避免删除无法验证归属的数据。 */
+export async function pruneExpiredAnswerFiles(rootDir: string, now = new Date()): Promise<void> {
+  const dir = answersDirOf(rootDir)
+  const cutoff = now.getTime() - TTL_DAYS * 24 * 60 * 60 * 1000
+  let names: readonly string[]
+  try {
+    names = await readdir(dir)
+  } catch {
+    return
+  }
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue
+    try {
+      const path = join(dir, name)
+      const doc = JSON.parse(await readFile(path, 'utf8')) as StoredAnswer
+      const completedAt = Date.parse(doc.completedAt)
+      if (Number.isFinite(completedAt) && completedAt < cutoff) await unlink(path)
+    } catch {
+      // 保守保留损坏文件，交由用户一键删除。
+    }
+  }
+}
+
 // —— 维护性删除（转发 @sift/store/maintenance；验收门 14） ——
 
+async function deleteAnswerFiles(rootDir: string, pageIds: ReadonlySet<string>): Promise<void> {
+  const dir = answersDirOf(rootDir)
+  let names: readonly string[]
+  try {
+    names = await readdir(dir)
+  } catch {
+    return
+  }
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue
+    try {
+      const doc = JSON.parse(await readFile(join(dir, name), 'utf8')) as StoredAnswer
+      const touchesDeletedPage = doc.questionProjection.pageStateWatermarks.some(w => pageIds.has(w.pageInstanceId))
+      if (touchesDeletedPage) await unlink(join(dir, name))
+    } catch {
+      // 损坏答案不阻塞本地数据删除；delete-all 仍会清理整个目录。
+    }
+  }
+}
+
 export async function deleteSessionStoreData(rootDir: string, sessionId: string): Promise<SessionDeleteReport> {
-  return deleteSessionData(rootDir, sessionId)
+  const store = await openSiftStore({ rootDir, readOnly: true })
+  let pageIds: readonly string[]
+  try {
+    pageIds = (await store.listPages({ sessionId })).map(page => page.pageInstanceId)
+  } finally {
+    await store.close()
+  }
+  const report = await deleteSessionData(rootDir, sessionId)
+  await deleteAnswerFiles(rootDir, new Set(pageIds))
+  return report
+}
+
+export async function deletePageStoreData(rootDir: string, pageInstanceId: string): Promise<SessionDeleteReport> {
+  const report = await deletePageData(rootDir, pageInstanceId)
+  await deleteAnswerFiles(rootDir, new Set([pageInstanceId]))
+  return report
 }
 
 export async function deleteAllStoreData(rootDir: string): Promise<void> {

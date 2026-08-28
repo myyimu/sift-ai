@@ -82,7 +82,15 @@ class LimitExceeded extends Error {}
  * 返回被保留的文本字符数（readable-v1 判定用）。
  * 任何限额超限抛 LimitExceeded（调用方失败关闭，不产出部分快照）。
  */
-function sanitizeClone(node: Node, depth: number, tally: WalkTally): number {
+function resolveAgainstBase(raw: string, baseUrl: string): string | null {
+  try {
+    return new URL(raw, baseUrl).toString()
+  } catch {
+    return null
+  }
+}
+
+function sanitizeClone(node: Node, depth: number, tally: WalkTally, baseUrl: string): number {
   tally.nodeCount += 1
   if (tally.nodeCount > SNAPSHOT_MAX_NODES) throw new LimitExceeded('nodeCount')
   if (depth > tally.maxDepth) tally.maxDepth = depth
@@ -112,13 +120,19 @@ function sanitizeClone(node: Node, depth: number, tally: WalkTally): number {
     el.removeAttribute(attr.name)
   }
   if (el.tagName.toLowerCase() === 'a' && keptHref !== null) {
-    const result = sanitizeUrl(keptHref)
-    if (!result.denied) el.setAttribute('href', result.safeUrl)
+    const resolved = resolveAgainstBase(keptHref, baseUrl)
+    if (resolved !== null) {
+      const result = sanitizeUrl(resolved)
+      if (!result.denied) el.setAttribute('href', result.safeUrl)
+    }
   }
   if (el.tagName.toLowerCase() === 'img') {
     if (keptSrc !== null) {
-      const result = sanitizeUrl(keptSrc)
-      if (!result.denied) el.setAttribute('src', result.safeUrl)
+      const resolved = resolveAgainstBase(keptSrc, baseUrl)
+      if (resolved !== null) {
+        const result = sanitizeUrl(resolved)
+        if (!result.denied) el.setAttribute('src', result.safeUrl)
+      }
     }
     if (keptAlt !== null) el.setAttribute('alt', redactSecrets(keptAlt))
   }
@@ -129,7 +143,7 @@ function sanitizeClone(node: Node, depth: number, tally: WalkTally): number {
 
   let readableChars = 0
   for (const child of Array.from(el.childNodes)) {
-    readableChars += sanitizeClone(child, depth + 1, tally)
+    readableChars += sanitizeClone(child, depth + 1, tally, baseUrl)
   }
   return readableChars
 }
@@ -173,7 +187,7 @@ export function captureDomSnapshot(doc: Document, input: CaptureInput): CaptureO
   const tally: WalkTally = { nodeCount: 0, maxDepth: 0 }
   let readableChars: number
   try {
-    readableChars = sanitizeClone(clone, 1, tally)
+    readableChars = sanitizeClone(clone, 1, tally, urlResult.safeUrl)
   } catch (error) {
     if (error instanceof LimitExceeded) {
       return { ok: false, code: 'capture_limit_exceeded', detail: error.message }

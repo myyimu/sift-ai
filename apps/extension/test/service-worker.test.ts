@@ -66,16 +66,20 @@ function createChromeStub() {
     const msg = message as { type: string; transferId?: string; index?: number }
     switch (msg.type) {
       case 'hello':
-        deliver({ type: 'welcome', protocolVersion: PROTOCOL_VERSION })
+        deliver({ type: 'welcome', protocolVersion: PROTOCOL_VERSION, host: 'sift-demo-host', storeReady: true })
         return
       case 'announce':
         deliver({ type: 'transfer_ack', transferId: msg.transferId, status: 'ok' })
         return
       case 'chunk':
-        deliver({ type: 'chunk_ack', transferId: msg.transferId, index: msg.index })
+        deliver({ type: 'chunk_ack', transferId: msg.transferId, index: msg.index, receivedBytes: 0 })
         return
       case 'commit':
-        deliver({ type: 'commit_ack', transferId: msg.transferId, deduplicated: false })
+        deliver({
+          type: 'commit_ack', transferId: msg.transferId, deduplicated: false,
+          payloadHash: (message as { payloadHash?: string }).payloadHash ?? `sha256:${'0'.repeat(64)}`,
+          stateVersion: 1, lastAppliedSequence: 1,
+        })
         return
       default:
         return
@@ -258,6 +262,16 @@ describe('service-worker 生命周期（mock chrome）', () => {
     expect(stateOf(h)).toBeUndefined() // 连 state 都未建立
   })
 
+  it('首次注入失败 → 回滚 grant/badge，并记录 injection_failed 撤销', async () => {
+    h.setExecuteScriptMode('fail')
+    await h.clickAction(GRANTED_TAB)
+    await waitFor(() => announces(h).some(f => f.envelope.type === 'authorization_revoked'), 'injection_failed revoke')
+    expect(announces(h).map(f => f.envelope.type)).toEqual(['authorization_granted', 'authorization_revoked'])
+    expect(payloadOf(h, announces(h)[1]!.transferId)).toMatchObject({ kind: 'authorization_revoked', reason: 'injection_failed' })
+    expect(stateOf(h).tabs['7']).toBeUndefined()
+    expect(h.badges.get(7)).toBe('')
+  })
+
   it('跨源导航（executeScript 拒绝）→ 即时撤权 cross_origin + badge 清 + grant 移出 storage', async () => {
     await grantTab(h)
     h.setExecuteScriptMode('fail')
@@ -282,6 +296,38 @@ describe('service-worker 生命周期（mock chrome）', () => {
     expect(announces(h).filter(f => f.envelope.type === 'authorization_revoked')).toHaveLength(0)
     expect(h.executeScriptCalls).toEqual([{ tabId: 7 }, { tabId: 7 }])
     expect(stateOf(h).tabs['7']).toMatchObject({ grantedOrigin: 'https://example.com' })
+    expect(h.badges.get(7)).toBe('S')
+  })
+
+  it('同源新 document 的 document_started → 换新 pageInstanceId 并标记换代', async () => {
+    await grantTab(h)
+    await h.csMessage({ sift: 1, kind: 'document_started', instanceNonce: 'n-old', url: GRANTED_TAB.url, title: '旧页', contentEpoch: 0 }, GRANTED_SENDER)
+    await waitFor(() => announces(h).filter(f => f.envelope.type === 'document_started').length === 1, 'old document_started')
+    const oldPage = announces(h).find(f => f.envelope.type === 'document_started')!.envelope.pageInstanceId
+    await h.navComplete(7)
+    await h.csMessage({ sift: 1, kind: 'document_started', instanceNonce: 'n-new', url: GRANTED_TAB.url, title: '新页', contentEpoch: 0 }, GRANTED_SENDER)
+    await waitFor(() => announces(h).filter(f => f.envelope.type === 'document_started').length === 2, 'new document_started')
+    const started = announces(h).filter(f => f.envelope.type === 'document_started')[1]!
+    expect(started.envelope.pageInstanceId).not.toBe(oldPage)
+    expect(payloadOf(h, started.transferId)).toMatchObject({ sameOriginReinject: true, instanceNonce: 'n-new' })
+    expect(stateOf(h).tabs['7']!.nextSequence).toBe(1)
+  })
+
+  it('已授权页面再次手势 → 暂停/恢复捕获并更新 badge', async () => {
+    await grantTab(h)
+    await h.clickAction(GRANTED_TAB)
+    await waitFor(() => announces(h).some(f => f.envelope.type === 'capture_paused'), 'capture_paused')
+    expect(stateOf(h).tabs['7']).toMatchObject({ paused: true })
+    expect(h.badges.get(7)).toBe('P')
+    const beforePausedMessage = announces(h).length
+    await h.csMessage({
+      sift: 1, kind: 'dom_snapshot', instanceNonce: 'stale-cs', contentEpoch: 0,
+      url: GRANTED_TAB.url, payloadJson: '{}',
+    }, GRANTED_SENDER)
+    expect(announces(h)).toHaveLength(beforePausedMessage)
+    await h.clickAction(GRANTED_TAB)
+    await waitFor(() => announces(h).some(f => f.envelope.type === 'capture_resumed'), 'capture_resumed')
+    expect(stateOf(h).tabs['7']).toMatchObject({ paused: false })
     expect(h.badges.get(7)).toBe('S')
   })
 

@@ -69,9 +69,10 @@
 
   <section id="data-section">
     <h2>数据控制</h2>
-    <p class="hint">删除仅在本机执行；host 正在写入时会诚实返回 store_busy，关闭已授权页面后重试。</p>
+    <p class="hint">删除仅在本机执行；Host 正在写入时会诚实返回 store_busy。再次点击 Chrome 工具栏中的 Sift 图标可暂停/恢复当前页面捕获。</p>
     <div class="danger-row">
       <button type="button" id="delete-session-button" disabled>删除所选范围 session 的本地数据</button>
+      <button type="button" id="delete-page-button" disabled>删除所选 page 的本地数据</button>
       <button type="button" id="delete-all-button">删除全部本地数据（含答案）</button>
     </div>
     <p id="delete-report" class="delete-report"></p>

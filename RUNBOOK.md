@@ -34,10 +34,23 @@ node tools/scripts/register-sift-native-host.mjs register   # 写 HKCU + manifes
 
 | 变量 | 含义 | 示例 |
 |---|---|---|
-| `SIFT_MODEL_BASE_URL` | 端点 origin（https；仅 localhost/127.0.0.1/[::1] 允许 http；不得带 path/query） | `https://api.example.com` |
+| `SIFT_MODEL_BASE_URL` | 端点 origin + 可选固定 basePath（https；仅 localhost/127.0.0.1/[::1] 允许 http；path 仅限字母/数字/`._~-` 静态段，禁 query/fragment/userinfo——2026-08-28 放宽，接百炼等国内兼容端点） | `https://api.example.com` 或 `https://dashscope.aliyuncs.com/compatible-models/v1` |
 | `SIFT_MODEL_API_KEY` | Bearer Key（仅环境，qa-cli 不接收 key 参数） | `sk-…` |
-| `SIFT_MODEL_ID` | 模型 ID | `gpt-4o-mini` |
+| `SIFT_MODEL_ID` | 模型 ID | `gpt-4o-mini` / `qwen-plus` |
 | `SIFT_MODEL_CTX` | 上下文窗口 token 数（投影预算用） | `128000` |
+
+完整 baseUrl（含 path）会显示在 UI 确认屏与顶栏"模型："一行——透明性不因放宽 path 降级。
+
+**百炼（阿里 DashScope）示例**——会话级 env + 启动（不要 `setx`：那会把 Key 写进注册表持久化）：
+
+```powershell
+cd E:\sift-ai\apps\desktop\pack2\win-unpacked
+$env:SIFT_MODEL_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-models/v1'
+$env:SIFT_MODEL_API_KEY  = 'sk-你的百炼Key'     # 百炼控制台 API-KEY 页获取
+$env:SIFT_MODEL_ID       = 'qwen-plus'           # 或 qwen-max / qwen-turbo
+$env:SIFT_MODEL_CTX      = '128000'
+Start-Process .\Sift.exe                          # 子进程继承本次会话的 env
+```
 
 qa-cli 可用 flag 覆盖前三者（`--model-base-url/--model-id/--model-ctx`），key 只认环境：
 
@@ -62,8 +75,8 @@ pnpm --filter @sift/desktop start             # electron .
 ### 2.3 开发用产品扩展
 Chrome 打开 `chrome://extensions` → Developer mode → Load unpacked → 选
 `apps/extension/dist`。manifest 带 key，加载后即固定 ID `jhkdmlohebjffokfonhiijhhmocfcppo`
-（与 native host 的 allowed_origins 对应）。当前 SW 为骨架（action 点击注入 +
-sendNativeMessage 通道），实现进度见 P0_DEMO_SCOPE 路线图。
+（与 native host 的 allowed_origins 对应）。当前 SW 已包含授权、生命周期撤权、暂停/恢复、
+Native Messaging 与捕获状态持久化。
 
 ### 2.4 注册表（native host 发现）
 ```bash
@@ -99,7 +112,7 @@ manifest 的 path 指向 `pack2\win-unpacked\SiftHost.cmd`——重新打包到�
 |---|---|---|
 | 静态 | `pnpm lint` / `pnpm lint:ast` | 全仓 / 观察侧两层规则 |
 | 类型 | `pnpm typecheck` | 全部 workspace 包 |
-| 单元 | `pnpm test` | vitest（411 用例：shared 契约 143 / host framing+mode+capture 52 / store 含读侧 readOnly+维护性删除 40 / extension capture·debounce·transport·SW 含 command 手势 54 / projector 抽取·投影·manifest 42 / **@sift/model adapter·config·validate 25** / **desktop qa-service 7** / 工具 48）。**必须从仓库根跑**：`pnpm -r test` 会因 eslint-sift-readonly 包的 root 配置找不到测试文件而误报失败 |
+| 单元 | `pnpm test` | vitest（419 用例；具体数量以当前输出为准）。**必须从仓库根跑**：`pnpm -r test` 会因 eslint-sift-readonly 包的 root 配置找不到测试文件而误报失败 |
 | 全链路（零 Chrome） | `pnpm vitest run apps/extension/test/e2e` | linkedom 夹具 → capture → transport → 真实 host-loop → 真实 FsStore 的 in-process 闭环（含全量重放去重） |
 | 模拟 Chrome spike | `node tools/spike/run-e03-spike.mjs` | UI 开/关两态各 100 次 connect/disconnect + 帧往返；`--rounds 10` 快速冒烟 |
 | 单链路诊断 | `node tools/spike/manual-roundtrip.mjs [--ui]` | 真实 `.cmd` 链路单次往返；`--ui` 先起 UI 实例 |
@@ -159,8 +172,8 @@ node tools/scripts/dump-store.mjs            # 缺省 %LOCALAPPDATA%\Sift\store
 
 ### 5.4 幂等重放演示
 
-对**同一页面**再点一次 action 图标：同源幂等（只重注入 CS，不产生新的
-`authorization_granted`）；若手动重发同 observation（模拟 commit_ack 丢失），host 靠
+对**同一页面**再点一次 action 图标：切换暂停/恢复（badge `P`/`S`，不产生新的
+`authorization_granted`）；恢复时固定 CS 注入保持幂等；若手动重发同 observation（模拟 commit_ack 丢失），host 靠
 journal 幂等返回 `deduplicated`——`pnpm vitest run apps/extension/test/e2e` 里有该场景
 的自动化断言（重放后 journal 行数不变、blob 数不变）。
 

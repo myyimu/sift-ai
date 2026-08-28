@@ -26,11 +26,13 @@ import { detectNativeHostLaunch } from '@sift/host/mode'
 import {
   askModel,
   buildProjectionForScope,
+  deletePageStoreData,
   deleteAllStoreData,
   deleteSessionStoreData,
   getStoreOverview,
   listAnswers,
   parseScope,
+  pruneExpiredAnswerFiles,
   resolveStoreRoot,
 } from './qa-service'
 import { loadModelConfig, modelConfigSummary } from '@sift/model'
@@ -78,6 +80,7 @@ if (isHost) {
       // 注册必须在 loadFile 之前：渲染层脚本一加载就会 invoke overview。
 
       const rootDir = resolveStoreRoot()
+      await pruneExpiredAnswerFiles(rootDir)
       const ok = <T>(value: T): { readonly ok: true; readonly value: T } => ({ ok: true, value })
       const fail = (error: unknown): { readonly ok: false; readonly message: string } => ({
         ok: false,
@@ -121,6 +124,8 @@ if (isHost) {
       ipcMain.handle('sift:list-answers', () => listAnswers(rootDir).then(ok, fail))
       ipcMain.handle('sift:delete-session', (_e, raw: unknown) =>
         deleteSessionStoreData(rootDir, (raw as { sessionId: string }).sessionId).then(ok, fail))
+      ipcMain.handle('sift:delete-page', (_e, raw: unknown) =>
+        deletePageStoreData(rootDir, (raw as { pageInstanceId: string }).pageInstanceId).then(ok, fail))
       ipcMain.handle('sift:delete-all', () => deleteAllStoreData(rootDir).then(() => ok(undefined), fail))
       ipcMain.handle('sift:model-config', () => Promise.resolve(ok(modelConfigSummary(loadModelConfig(process.env)))))
 

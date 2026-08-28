@@ -19,7 +19,7 @@ import {
   PROTOCOL_VERSION,
   bytesToBase64,
   chunkCountFor,
-  type HostMessage,
+  parseHostMessage,
 } from '@sift/shared/wire'
 
 export interface NativePortLike {
@@ -128,8 +128,11 @@ export function createCaptureTransport(deps: TransportDeps): CaptureTransport {
       idleHandle = null
       if (queue.length === 0 && port !== null) {
         log('transport：队列空 5s，断开 native port')
-        state = 'idle'
-        port.disconnect() // onDisconnected 兜底清理
+        // 必须走 teardownPort 清空引用：自己 disconnect() 不会触发自己的
+        // onDisconnected（Chrome 只在对方断开时回调），残留引用会让下一次
+        // enqueue 对已断端口 postMessage，抛 "Attempting to use a
+        // disconnected port object"（实测 2026-08-28）。
+        teardownPort()
       }
     }, IDLE_DISCONNECT_MS)
   }
@@ -168,17 +171,25 @@ export function createCaptureTransport(deps: TransportDeps): CaptureTransport {
 
   const connectAndHello = (): void => {
     cancelIdleDisconnect()
+    let connectedPort: NativePortLike
     try {
-      port = deps.connectNative()
+      connectedPort = deps.connectNative()
     } catch (error) {
       log(`transport：connectNative 失败：${String(error)}`)
       scheduleRetry()
       return
     }
-    port.onMessage.addListener(onHostMessage)
-    port.onDisconnect.addListener(onDisconnected)
+    port = connectedPort
+    // 端口断开回调可能在 teardown 后延迟到达；绑定实例，避免旧端口
+    // 清空新端口引用或把新一轮状态误判为断线。
+    connectedPort.onMessage.addListener(raw => {
+      if (port === connectedPort) onHostMessage(raw)
+    })
+    connectedPort.onDisconnect.addListener(() => {
+      if (port === connectedPort) onDisconnected()
+    })
     state = 'hello'
-    port.send({ type: 'hello', protocolVersion: PROTOCOL_VERSION, client: 'sift-extension' })
+    connectedPort.send({ type: 'hello', protocolVersion: PROTOCOL_VERSION, client: 'sift-extension' })
     armAwaitTimer(WELCOME_TIMEOUT_MS, () => {
       log('transport：welcome 超时')
       teardownPort()
@@ -273,11 +284,27 @@ export function createCaptureTransport(deps: TransportDeps): CaptureTransport {
   // —— 接收侧 ——
 
   const onHostMessage = (raw: unknown): void => {
-    const msg = raw as HostMessage
+    const msg = parseHostMessage(raw)
+    if (msg === null) {
+      // Host 回包属于不可信输入；畸形帧不能被当作“未知事件”静默忽略，
+      // 否则可能造成队列错误出队或版本不兼容继续传输。
+      log('transport：收到非法 host 回包，暂停传输')
+      teardownPort()
+      stopped = true
+      queue.length = 0
+      return
+    }
     const head = queue[0]
     switch (msg?.type) {
       case 'welcome':
         if (state === 'hello') {
+          if (msg.protocolVersion !== PROTOCOL_VERSION || msg.storeReady !== true) {
+            log('transport：welcome 版本或 store 状态不符，暂停传输')
+            teardownPort()
+            stopped = true
+            queue.length = 0
+            return
+          }
           state = 'idle'
           clearAwaitTimer()
           pump()
@@ -312,6 +339,13 @@ export function createCaptureTransport(deps: TransportDeps): CaptureTransport {
         return
       case 'commit_ack':
         if (state === 'commit' && head !== undefined && msg.transferId === head.transferId) {
+          if (msg.payloadHash !== inFlightHash) {
+            log('transport：commit_ack payloadHash 不符，暂停传输')
+            teardownPort()
+            stopped = true
+            queue.length = 0
+            return
+          }
           clearAwaitTimer()
           log(`transport：${msg.transferId} commit_ack（deduplicated=${msg.deduplicated}）`)
           queue.shift()

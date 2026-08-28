@@ -16,6 +16,7 @@ import {
   answersDirOf,
   askModel,
   buildProjectionForScope,
+  deletePageStoreData,
   getStoreOverview,
   listAnswers,
   parseScope,
@@ -163,7 +164,7 @@ describe('getStoreOverview', () => {
     expect(overview.sessions).toHaveLength(1)
     expect(overview.pages).toHaveLength(2)
     expect(overview.pages.map(p => p.canonicalUrl).sort()).toEqual(['https://example.com/a', 'https://example.com/b?page=2'])
-    expect(overview.modelConfig).toEqual({ configured: true, origin: 'https://api.example.com', model: 'gpt-x', contextWindow: 128000 })
+    expect(overview.modelConfig).toEqual({ configured: true, baseUrl: 'https://api.example.com', model: 'gpt-x', contextWindow: 128000 })
     expect(JSON.stringify(overview)).not.toContain('sk-secret-key')
     expect(spy).not.toHaveBeenCalled()
     spy.mockRestore()
@@ -287,6 +288,20 @@ describe('askModel + 答案持久化', () => {
     expect(answers[0]!.analyzer.model).toBe('mock-model')
 
     await deleteAllStoreData(root)
+    await expect(listAnswers(root)).resolves.toEqual([])
+  })
+
+  it('删除 Page 时同步删除引用该 Page 的派生答案', async () => {
+    await seedTwoPages()
+    await writer!.close()
+    writer = null
+    const projection = await projectionOf()
+    const asked = await askModel(root, projection, CONFIG, async () => completionResponse(modelOutputJson([projection.blocks[0]!.id])))
+    expect(asked.status).toBe('ok')
+    await expect(listAnswers(root)).resolves.toHaveLength(1)
+
+    const report = await deletePageStoreData(root, 'page-a')
+    expect(report.removedObservations).toBeGreaterThan(0)
     await expect(listAnswers(root)).resolves.toEqual([])
   })
 })

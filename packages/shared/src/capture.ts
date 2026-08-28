@@ -191,7 +191,19 @@ export const authorizationRevokedPayloadSchema = z.object({
   kind: z.literal('authorization_revoked'),
   captureVersion: captureVersionLiteral,
   url: z.string().min(1),
-  reason: z.enum(['cross_origin', 'tab_closed', 'port_error', 'sw_shutdown']),
+  reason: z.enum(['cross_origin', 'tab_closed', 'injection_failed', 'port_error', 'sw_shutdown']),
+}).strict()
+
+export const capturePausedPayloadSchema = z.object({
+  schemaVersion: z.literal(1),
+  kind: z.literal('capture_paused'),
+  captureVersion: captureVersionLiteral,
+}).strict()
+
+export const captureResumedPayloadSchema = z.object({
+  schemaVersion: z.literal(1),
+  kind: z.literal('capture_resumed'),
+  captureVersion: captureVersionLiteral,
 }).strict()
 
 export const documentStartedPayloadSchema = z.object({
@@ -215,8 +227,8 @@ export const captureFailedPayloadSchema = z.object({
 }).strict()
 
 /**
- * 按 envelope.type 取 payload schema；P0 落地 5 种事件
- * （dom_snapshot + 4 控制事件，含 capture_failed），
+ * 按 envelope.type 取 payload schema；P0 落地 7 种事件
+ * （dom_snapshot + 6 控制事件，含 capture_failed/paused/resumed），
  * 其余类型返回 null（capture-protocol 按 invalid_message 拒绝——fail-closed）。
  */
 export function payloadSchemaFor(
@@ -226,6 +238,8 @@ export function payloadSchemaFor(
     case 'dom_snapshot': return domSnapshotPayloadSchema
     case 'authorization_granted': return authorizationGrantedPayloadSchema
     case 'authorization_revoked': return authorizationRevokedPayloadSchema
+    case 'capture_paused': return capturePausedPayloadSchema
+    case 'capture_resumed': return captureResumedPayloadSchema
     case 'document_started': return documentStartedPayloadSchema
     case 'capture_failed': return captureFailedPayloadSchema
     default: return null

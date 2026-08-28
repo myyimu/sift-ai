@@ -15,14 +15,27 @@ import {
 class FakePort {
   readonly sent: unknown[] = []
   disconnectCount = 0
+  private disconnected = false
   private messageListeners: ((message: unknown) => void)[] = []
   private disconnectListeners: (() => void)[] = []
   readonly onMessage = { addListener: (cb: (message: unknown) => void) => { this.messageListeners.push(cb) } }
   readonly onDisconnect = { addListener: (cb: () => void) => { this.disconnectListeners.push(cb) } }
   send(message: unknown): void {
+    // 对齐 Chrome：断开后的 port 再发送抛同步异常（曾因 fake 缺这条语义，
+    // idle 断开残留引用的 bug 从测试缝里溜过——2026-08-28 修复）。
+    if (this.disconnected) throw new Error('Attempting to use a disconnected port object')
     this.sent.push(message)
   }
+  /** 本端主动断开：不触发自己的 onDisconnect（Chrome 语义，只通知对端）。 */
   disconnect(): void {
+    if (this.disconnected) return
+    this.disconnected = true
+    this.disconnectCount += 1
+  }
+  /** 对端断开（host 退出/管道关闭）：这才触发 onDisconnect 回调。 */
+  killed(): void {
+    if (this.disconnected) return
+    this.disconnected = true
     this.disconnectCount += 1
     for (const cb of this.disconnectListeners) cb()
   }
@@ -258,7 +271,7 @@ describe('transport：断线与错误', () => {
     const port = await driveToAnnounce(t, obs)
     port.receive({ type: 'transfer_ack', transferId: obs.transferId, status: 'ok' })
     expect(t.queueSize).toBe(1)
-    port.disconnect() // 外部 kill（host 进程退出）
+    port.killed() // 外部 kill（host 进程退出）——对端断开才触发 onDisconnect
 
     await vi.advanceTimersByTimeAsync(1000)
     const p2 = currentPort()
@@ -346,8 +359,12 @@ describe('transport：闲置断开', () => {
     await vi.advanceTimersByTimeAsync(5000)
     expect(port.disconnectCount).toBe(1)
 
+    // 回归（2026-08-28）：本端 disconnect 不触发 onDisconnected，若 idle 路径
+    // 不清引用，下一条事件会对已断端口 send（抛 disconnected port 异常）且永不重连。
     t.enqueue(observation('{"v":2}'))
+    expect(ports.length).toBe(2) // 必须新建 port，而不是复用残留引用
     const p2 = currentPort()
+    expect(p2).not.toBe(port)
     expect(p2.sent[0]).toMatchObject({ type: 'hello' })
   })
 })
