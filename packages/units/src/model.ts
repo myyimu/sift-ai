@@ -2,7 +2,7 @@
 // 本文件只提供确定性类型、指纹和版本物化，不执行网络、LLM 或站点逻辑。
 import { createHash } from 'node:crypto'
 
-export const UNIT_EXTRACTOR_VERSION = 'unit-extractor-v1.1'
+export const UNIT_EXTRACTOR_VERSION = 'unit-extractor-v1.2'
 export const UNIT_NORMALIZER_VERSION = 'stable-content-v1'
 
 export type CaptureExtent = 'partial' | 'full' | 'unknown'

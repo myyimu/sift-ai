@@ -1,6 +1,7 @@
-// P0.5 分级 UnitExtractor-v1：Semantic → Repeated Structure → Main Content fallback。
+// P0.5 分级 UnitExtractor-v1.2：Semantic → Repeated Structure → Main Content fallback。
 // 输入永远是已经脱敏、持久化的 HTML；linkedom/projector 只在离线内存中运行。
 import { parseHTML } from 'linkedom'
+import { Readability } from '@mozilla/readability'
 import { sanitizeUrl } from '@sift/shared'
 import { extractBlocks, type ExtractedBlock } from '@sift/projector'
 import {
@@ -270,6 +271,39 @@ function repeatedCandidates(body: Element, input: UnitExtractorInput, limit: Uni
 }
 
 function fallbackCandidate(body: Element, input: UnitExtractorInput, limit: UnitExtractorLimits): Candidate | null {
+  // Readability 只处理独立的 linkedom 文档副本；传入的已捕获 HTML 不会触发
+  // 网络或资源加载。它修改传入 DOM，因此绝不能复用主解析树。
+  try {
+    const clonedDocument = parseHTML(`<html><body>${body.innerHTML}</body></html>`).document
+    const article = new Readability(clonedDocument, {
+      disableJSONLD: true,
+      maxElemsToParse: limit.maxNodes,
+    }).parse()
+    const content = typeof article?.content === 'string' ? article.content : ''
+    const text = article?.textContent ?? ''
+    if (content.trim() !== '' && textLength(text) >= limit.minTextChars) {
+      const ownHtml = `<html><body>${content}</body></html>`
+      const blocks = extractBlocks(ownHtml)
+      if (blocks.length > 0 && blocks.some(block => block.kind !== 'heading' && textLength(block.text) >= limit.minTextChars)) {
+        const sourceMetadata: SourceMetadataSnapshot = {
+          ...(input.title === undefined || input.title.trim() === '' ? {} : { title: input.title }),
+          ...(typeof article?.byline === 'string' && article.byline.trim() !== '' ? { author: article.byline.trim() } : {}),
+          ...(typeof article?.publishedTime === 'string' && article.publishedTime.trim() !== '' ? { publishedAt: article.publishedTime.trim() } : {}),
+        }
+        return {
+          element: body,
+          mode: 'main_content_fallback',
+          confidence: 0.55,
+          ownHtml,
+          blocks,
+          identityKey: { kind: 'unkeyed' },
+          ...(Object.keys(sourceMetadata).length === 0 ? {} : { sourceMetadata }),
+        }
+      }
+    }
+  } catch {
+    // Readability 对非浏览器 DOM 的兼容性可能随版本变化；失败时继续走确定性根选择。
+  }
   const roots: Array<{ element: Element; priority: number; order: number }> = [{ element: body, priority: 0, order: 0 }]
   const rootSelectors: ReadonlyArray<{ selector: string; priority: number }> = [
     { selector: 'main,[role="main"],article,[role="article"],[itemprop="articleBody"]', priority: 3 },

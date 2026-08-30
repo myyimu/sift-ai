@@ -7,7 +7,7 @@ const inputBase = {
   safeUrl: 'https://example.com/list', observedAt: '2026-08-30T00:00:00.000Z', captureExtent: 'full' as const,
 }
 
-describe('UnitExtractor-v1', () => {
+describe('UnitExtractor-v1.2', () => {
   it('extracts semantic units and excludes nested child content from parent ownership', () => {
     const result = extractUnits({ ...inputBase, html: `<main><article id="parent"><h1>父标题</h1><p>${LONG} 父内容</p><article id="child"><p>${LONG} 子内容</p></article></article></main>` })
     expect(result.status).toBe('ok')
@@ -54,6 +54,21 @@ describe('UnitExtractor-v1', () => {
     if (result.status !== 'ok') return
     expect(result.diagnostics.fallbackUsed).toBe(true)
     expect(result.evidenceBlobs.some(blob => blob.text.includes('推荐卡片'))).toBe(false)
+  })
+
+  it('uses Readability on an isolated clone and preserves safe source metadata', () => {
+    const body = Array.from({ length: 8 }, () => LONG).join(' ')
+    const result = extractUnits({
+      ...inputBase,
+      title: '页面标题',
+      html: `<html><body><header>站点导航</header><div class="story"><h1>正文标题</h1><p>${body}</p><a rel="author">作者甲</a><time datetime="2026-08-30">2026-08-30</time></div><aside>不相关推荐内容</aside></body></html>`,
+    })
+    expect(result.status).toBe('ok')
+    if (result.status !== 'ok') return
+    expect(result.diagnostics.fallbackUsed).toBe(true)
+    expect(result.observations).toHaveLength(1)
+    expect(result.evidenceBlobs.some(blob => blob.text.includes('不相关推荐内容'))).toBe(false)
+    expect(result.observations[0]!.sourceMetadata).toMatchObject({ title: '页面标题', author: '作者甲' })
   })
 
   it('is deterministic for identical input', () => {

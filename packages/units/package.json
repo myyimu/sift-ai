@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@mozilla/readability": "^0.6.0",
     "@sift/projector": "workspace:*",
     "@sift/shared": "workspace:*",
     "linkedom": "^0.18.9"
