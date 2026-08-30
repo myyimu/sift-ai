@@ -72,13 +72,15 @@ capabilities.
 | Stage | Capability | Value to validate |
 |---|---|---|
 | **P0 (implemented)** | User-authorized DOM capture, local evidence, bounded cross-page Q&A, Answer + Sources | Can evidence-backed batch reading save meaningful time? |
-| **P0.5 (next)** | Content identity and deduplication, Topic Cloud, restrained desktop information-radar entry point | Can users understand the main themes they encountered at a glance? |
+| **P0.5 (partial)** | Offline content identity/deduplication and on-demand Topic Cloud; desktop information-radar entry point remains next | Can users understand the main themes they encountered at a glance? |
 | **Later** | Stable themes, relationship graph, signal ranking, historical baselines, and hybrid retrieval | Can the system reliably surface new, accelerating, and cross-source weak signals? |
 
-The last two rows are documented product direction, not claims about the current
-code. Sift starts with the trust-sensitive foundation: reliable capture, clear
-authorization, a local source of truth, deterministic projections, and
-verifiable citations.
+The final row is documented product direction, not a claim about the current code.
+P0.5 now has a partial, demo-ready offline identity layer and an explicitly
+confirmed Topic Cloud flow; the full desktop information-radar experience is
+still future work. Sift starts with the trust-sensitive foundation: reliable
+capture, clear authorization, a local source of truth, deterministic projections,
+and verifiable citations.
 
 > **Current release level: Alpha source preview.** Sift AI is a Windows-only,
 > internal P0 demo. It is not production-ready, does not support sensitive or
@@ -122,6 +124,9 @@ The repository implements the P0 vertical slice:
 - expiring Native Host status leases and precise capture failure labels;
 - local, content-free internal-demo evaluation events for answer latency, source
   clicks, citation support ratings, and subjective time saved.
+- partial P0.5 offline UnitExtractor/Ledger and an on-demand Topic Cloud with
+  bounded preview, explicit remote-processing confirmation, cached projections,
+  and source details (see [RUNBOOK.md](RUNBOOK.md) §5.7).
 
 Current Alpha limitations:
 
@@ -133,9 +138,9 @@ Current Alpha limitations:
   remain partial or unsupported;
 - demo evaluation events stay local and are not production analytics.
 
-See [P0_DEMO_SCOPE.md](P0_DEMO_SCOPE.md) for the authoritative current scope.
-P0.5 documents in this repository describe future contracts and are not claims
-about implemented functionality.
+See [P0_DEMO_SCOPE.md](P0_DEMO_SCOPE.md) for the P0 scope and
+[P0.5_IMPLEMENTATION_STATUS.md](P0.5_IMPLEMENTATION_STATUS.md) for the current
+partial P0.5 status. The full P0.5 product shape is not yet implemented.
 
 ## Security and privacy model
 
