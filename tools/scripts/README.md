@@ -53,5 +53,6 @@ host manifest 落在 `%LOCALAPPDATA%\Sift\NativeMessagingHosts\com.dj.sift.demo.
 - `make-host-manifest.mjs` —— 生成 native host manifest JSON。
 - `register-host.ps1` / `unregister-host.ps1` —— 注册/注销 HKCU host。
 - `dump-store.mjs` —— SiftStore 只读摘要（journal/page-state/blob 计数；**绝不打印 html 正文**）。用法：`node tools/scripts/dump-store.mjs [storeRoot]`，缺省 `%LOCALAPPDATA%\Sift\store`。回归测试 `dump-store.test.mjs`。
+- `demo-model.env.example` —— OpenAI-compatible 模型环境变量模板（空 Key，占位用；不会自动加载）。
 - `serve-fixtures.mjs` —— 手动演示用静态服务器（仅 127.0.0.1、仅 `fixtures/pages/`；缺省端口 8765）。sanitizeUrl 不放行 `file://`，演示夹具必须走 http。
 - `../eslint-sift-readonly/` —— eslint 两层规则集及其正反例测试。

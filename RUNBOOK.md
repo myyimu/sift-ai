@@ -32,6 +32,9 @@ node tools/scripts/register-sift-native-host.mjs register   # 写 HKCU + manifes
 `@sift/model`（OpenAI 兼容 Chat Completions）只从进程环境读取配置，**API Key 永不持久化、
 不进日志/投影/store**：
 
+可复制 `tools/scripts/demo-model.env.example` 作为配置清单；该文件只是模板，不会被自动
+加载，也不应把真实 Key 写入仓库。
+
 | 变量 | 含义 | 示例 |
 |---|---|---|
 | `SIFT_MODEL_BASE_URL` | 端点 origin + 可选固定 basePath（https；仅 localhost/127.0.0.1/[::1] 允许 http；path 仅限字母/数字/`._~-` 静态段，禁 query/fragment/userinfo——2026-08-28 放宽，接百炼等国内兼容端点） | `https://api.example.com` 或 `https://dashscope.aliyuncs.com/compatible-mode/v1` |
