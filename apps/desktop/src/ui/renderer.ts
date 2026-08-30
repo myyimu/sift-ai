@@ -74,6 +74,10 @@ function setStatus(text: string, tone: Tone = 'busy'): void {
   statusEl.className = `status ${tone}`
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+}
+
 // —— 概览与 scope ——
 
 let overview: StoreOverview | null = null
@@ -249,9 +253,19 @@ async function onConfirm(): Promise<void> {
   confirmButton.disabled = true
   buildButton.disabled = true
   setStatus('正在回答')
-  const result: IpcResult<AskModelIpc> = await bridge.askModel(current)
-  confirmButton.disabled = false
-  updateActionEnabled()
+  let result: IpcResult<AskModelIpc>
+  try {
+    result = await bridge.askModel(current)
+  } catch (error) {
+    setStatus('回答或引用校验失败', 'err')
+    answerTextEl.textContent = `请求未完成：${errorMessage(error)}`
+    answerSection.hidden = false
+    return
+  } finally {
+    // IPC 断线/主进程异常也必须恢复按钮，否则 Demo 面板会永久卡在“正在回答”。
+    confirmButton.disabled = false
+    updateActionEnabled()
+  }
   if (!result.ok) {
     setStatus('回答或引用校验失败', 'err')
     answerTextEl.textContent = result.message
@@ -414,9 +428,16 @@ async function onPrepareTopics(days: number): Promise<void> {
   while (topicListEl.firstChild !== null) topicListEl.removeChild(topicListEl.firstChild)
   topicDetailEl.hidden = true
   const range = topicRange(days)
-  const result = await bridge.previewTopics(scopeSelect.value, range.from, range.to)
-  topic7Button.disabled = false
-  topic30Button.disabled = false
+  let result: Awaited<ReturnType<SiftBridge['previewTopics']>>
+  try {
+    result = await bridge.previewTopics(scopeSelect.value, range.from, range.to)
+  } catch (error) {
+    topicStatusEl.textContent = `主题预览失败：${errorMessage(error)}`
+    return
+  } finally {
+    topic7Button.disabled = false
+    topic30Button.disabled = false
+  }
   if (!result.ok) { topicStatusEl.textContent = result.message; return }
   const value = result.value
   if (value.status === 'scope_parse_error' || value.status === 'invalid_input' || value.status === 'scope_not_found' || value.status === 'invalid_range') { topicStatusEl.textContent = value.message ?? '主题范围无效'; return }
@@ -435,12 +456,19 @@ async function onGenerateTopics(days: number): Promise<void> {
   topic30Button.disabled = true
   topicConfirmButton.disabled = true
   topicStatusEl.textContent = '正在生成主题（已获得本次远程处理确认）'
-  const result = await bridge.generateTopics(scopeSelect.value, range.from, range.to)
-  topic7Button.disabled = false
-  topic30Button.disabled = false
-  topicConfirmButton.disabled = false
-  topicConfirmButton.hidden = true
-  pendingTopicDays = null
+  let result: Awaited<ReturnType<SiftBridge['generateTopics']>>
+  try {
+    result = await bridge.generateTopics(scopeSelect.value, range.from, range.to)
+  } catch (error) {
+    topicStatusEl.textContent = `主题生成失败：${errorMessage(error)}`
+    return
+  } finally {
+    topic7Button.disabled = false
+    topic30Button.disabled = false
+    topicConfirmButton.disabled = false
+    topicConfirmButton.hidden = true
+    pendingTopicDays = null
+  }
   if (!result.ok) { topicStatusEl.textContent = result.message; return }
   const value = result.value
   if (value.status === 'scope_parse_error' || value.status === 'invalid_input' || value.status === 'scope_not_found' || value.status === 'invalid_range') { topicStatusEl.textContent = value.message ?? '主题范围无效'; return }
