@@ -114,7 +114,9 @@ node、以及 Chrome 对 bat 的引号/编码行为不可靠。本方案不冲�
 - [x] 注册表注册/查询/回滚脚本已就绪（`tools/scripts/register-sift-native-host.mjs`，
       仅 HKCU、Chrome 键、可 `status`/`remove`）——**2026-08-27 用户确认后执行
       register 并复核通过**（manifest 指向 pack2 `SiftHost.cmd`，origins 锁定
-      固定 Extension ID；回滚随时可用 `remove`）；
+      固定 Extension ID；回滚随时可用 `remove`）。上述是历史验证记录；若开发机
+      注册表或打包目录被重置，必须重新执行 `register`，并以 `node
+      tools/scripts/demo-preflight.mjs` 的当前结果为准，不能仅凭本记录宣称已注册；
 - [x] 真实 Chrome E2E（`tools/spike/run-chrome-e2e.mjs`，临时测试扩展与产品扩展
       同 key → 同 ID；单向报告协议；UI 开/关两态）——**2026-08-27 PASS（exit 0）**：
       管道自检先行通过（CfT 151 + `--no-sandbox`，全链触达且如期回报
