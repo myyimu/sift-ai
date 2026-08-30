@@ -12,6 +12,7 @@
 | `pnpm lint` | 全仓 eslint（含 sift-readonly 两层规则） |
 | `pnpm lint:ast` | 只检查 `apps/extension/src`（观察侧代码） |
 | `pnpm test` | vitest（shared 契约 / host framing+mode / eslint 规则正反例） |
+| `pnpm preflight` | 只读检查 Node、构建产物、Extension 权限、Native Host 注册和模型配置 |
 | `pnpm typecheck` | 各包 tsc --noEmit |
 | `pnpm build` | esbuild 打包 extension -> `apps/extension/dist/` |
 

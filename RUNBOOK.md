@@ -120,6 +120,17 @@ manifest 的 path 指向 `pack2\win-unpacked\SiftHost.cmd`——重新打包到�
 | 正式 E2E | `node tools/spike/run-chrome-e2e.mjs --cft` | 前置：注册表已 register。判定：UI 开/关两态各 100/100。2026-08-27 基线：p50=116ms |
 | **全链问答 E2E** | `node tools/e2e/run-full-chain-e2e.mjs` | 前置：register + 最新 pack2 + `pnpm build && pnpm build:desktop`。真 Chrome 手势（Alt+Shift+S SendKeys）→ 授权/捕获落盘 → qa-cli 真投影 → 本地 mock OpenAI → 校验 → 答案落盘断言 + UI 冒烟。`--mode degrade` 验证 json_schema→json_object 降级（断言变恰好 2 次调用）；`--keep` 保留现场。2026-08-28 基线：strict/degrade 双 PASS |
 
+### 4.1 Demo 启动前置检查
+
+```powershell
+pnpm preflight
+```
+
+该命令只读检查 Node 版本、Extension/Desktop/Native Host 产物、P0 manifest 权限、
+Native Host 注册状态和模型环境变量；不会写注册表、读取或打印 API key，也不会访问网络。
+`FAIL` 项必须修复后再演示；模型配置缺失仅显示为 `WARN`，仍可演示捕获、离线 Unit 提取
+和主题预览，但问答/主题确认发送不可用。
+
 - `--cft` 自动下载 Chrome for Testing 到 `tools/.cache/cft`（npmmirror 镜像；本机品牌
   Chrome 137+ 忽略 `--load-extension`，故必须用 CfT）。CfT 附加 `--no-sandbox` 的原因与
   其余环境坑见 `tools/spike/README.md`。
