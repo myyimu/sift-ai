@@ -58,13 +58,22 @@ describe('UnitExtractor-v1.2', () => {
 
   it('uses Readability on an isolated clone and preserves safe source metadata', () => {
     const body = Array.from({ length: 8 }, () => LONG).join(' ')
-    const result = extractUnits({
-      ...inputBase,
-      title: '页面标题',
-      html: `<html><body><header>站点导航</header><div class="story"><h1>正文标题</h1><p>${body}</p><a rel="author">作者甲</a><time datetime="2026-08-30">2026-08-30</time></div><aside>不相关推荐内容</aside></body></html>`,
-    })
+    const originalFetch = globalThis.fetch
+    let fetchCalls = 0
+    globalThis.fetch = (async () => { fetchCalls += 1; throw new Error('network disabled in extractor') }) as typeof fetch
+    let result: ReturnType<typeof extractUnits>
+    try {
+      result = extractUnits({
+        ...inputBase,
+        title: '页面标题',
+        html: `<html><body><header>站点导航</header><div class="story"><h1>正文标题</h1><p>${body}</p><a rel="author">作者甲</a><time datetime="2026-08-30">2026-08-30</time></div><aside>不相关推荐内容</aside></body></html>`,
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
     expect(result.status).toBe('ok')
     if (result.status !== 'ok') return
+    expect(fetchCalls).toBe(0)
     expect(result.diagnostics.fallbackUsed).toBe(true)
     expect(result.observations).toHaveLength(1)
     expect(result.evidenceBlobs.some(blob => blob.text.includes('不相关推荐内容'))).toBe(false)

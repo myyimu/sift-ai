@@ -15,6 +15,7 @@
     "@mozilla/readability": "^0.6.0",
     "@sift/projector": "workspace:*",
     "@sift/shared": "workspace:*",
+    "defuddle": "^0.19.3",
     "linkedom": "^0.18.9"
   },
   "devDependencies": {

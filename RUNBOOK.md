@@ -241,8 +241,9 @@ page-state/blob GC）与"删除全部数据"（含 answers 目录，两步确认
 
 主题生成受与问答一致的有界预算约束：最多 200 个去重 Unit、20 个页面、512 KiB 和约
 32k Token。任一上限超出都会要求缩小 scope，不会静默截断或声称覆盖完整范围。当前
-`unit-extractor-v1.2` 使用离线的 Mozilla Readability（独立 DOM 副本）与确定性的
-Semantic/Repeated Structure/Main Content fallback 路径；不会联网、调用 OCR 或在捕获热路径运行模型。
+`unit-extractor-v1.2` 使用离线的 Defuddle（`markdown: true`、`useAsync: false`，独立 DOM
+副本）、Mozilla Readability 与确定性的 Semantic/Repeated Structure/Main Content fallback
+路径；不会联网、调用 OCR 或在捕获热路径运行模型。
 若范围为空、超过预算、模型未
 配置或返回非法引用，UI 会显示明确失败状态，原始捕获不受影响。
 

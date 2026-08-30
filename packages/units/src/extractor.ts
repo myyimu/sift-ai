@@ -1,6 +1,7 @@
 // P0.5 分级 UnitExtractor-v1.2：Semantic → Repeated Structure → Main Content fallback。
 // 输入永远是已经脱敏、持久化的 HTML；linkedom/projector 只在离线内存中运行。
 import { parseHTML } from 'linkedom'
+import { DefuddleClass } from 'defuddle/node'
 import { Readability } from '@mozilla/readability'
 import { sanitizeUrl } from '@sift/shared'
 import { extractBlocks, type ExtractedBlock } from '@sift/projector'
@@ -271,6 +272,41 @@ function repeatedCandidates(body: Element, input: UnitExtractorInput, limit: Uni
 }
 
 function fallbackCandidate(body: Element, input: UnitExtractorInput, limit: UnitExtractorLimits): Candidate | null {
+  // Defuddle 只处理独立的 linkedom 文档副本；显式 markdown/useAsync 选项用于
+  // 固定输出并关闭异步联网。它可能修改传入 DOM，因此绝不能复用主解析树。
+  try {
+    const clonedDocument = parseHTML(`<html><body>${body.innerHTML}</body></html>`).document
+    const result = new DefuddleClass(clonedDocument, {
+      markdown: true,
+      useAsync: false,
+      url: input.safeUrl,
+    }).parse()
+    const content = typeof result.content === 'string' ? result.content : ''
+    const text = clonedDocument.body?.textContent ?? ''
+    if (content.trim() !== '' && textLength(text) >= limit.minTextChars) {
+      const ownHtml = `<html><body>${content}</body></html>`
+      const blocks = extractBlocks(ownHtml)
+      if (blocks.length > 0 && blocks.some(block => block.kind !== 'heading' && textLength(block.text) >= limit.minTextChars)) {
+        const sourceMetadata: SourceMetadataSnapshot = {
+          ...(input.title === undefined || input.title.trim() === '' ? {} : { title: input.title }),
+          ...(typeof result.author === 'string' && result.author.trim() !== '' ? { author: result.author.trim() } : {}),
+          ...(typeof result.published === 'string' && result.published.trim() !== '' ? { publishedAt: result.published.trim() } : {}),
+        }
+        return {
+          element: body,
+          mode: 'main_content_fallback',
+          confidence: 0.55,
+          ownHtml,
+          blocks,
+          identityKey: { kind: 'unkeyed' },
+          ...(Object.keys(sourceMetadata).length === 0 ? {} : { sourceMetadata }),
+        }
+      }
+    }
+  } catch {
+    // Defuddle 对非浏览器 DOM 的兼容性可能随版本变化；继续走 Readability。
+  }
+
   // Readability 只处理独立的 linkedom 文档副本；传入的已捕获 HTML 不会触发
   // 网络或资源加载。它修改传入 DOM，因此绝不能复用主解析树。
   try {
