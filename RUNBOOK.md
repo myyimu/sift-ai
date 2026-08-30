@@ -131,6 +131,16 @@ Native Host 注册状态和模型环境变量；不会写注册表、读取或�
 `FAIL` 项必须修复后再演示；模型配置缺失仅显示为 `WARN`，仍可演示捕获、离线 Unit 提取
 和主题预览，但问答/主题确认发送不可用。
 
+### 4.2 一键生成 Demo 目录包
+
+```powershell
+pnpm demo:build
+```
+
+该命令依次构建 Extension、桌面端并运行 `electron-builder --dir`，产物位于
+`apps/desktop/pack2/win-unpacked`。它不会写注册表或加载 Chrome；构建后仍须先运行
+`pnpm preflight`，再由用户明确确认执行 Native Host `register`。
+
 - `--cft` 自动下载 Chrome for Testing 到 `tools/.cache/cft`（npmmirror 镜像；本机品牌
   Chrome 137+ 忽略 `--load-extension`，故必须用 CfT）。CfT 附加 `--no-sandbox` 的原因与
   其余环境坑见 `tools/spike/README.md`。

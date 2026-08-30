@@ -23,6 +23,7 @@
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "preflight": "node tools/scripts/demo-preflight.mjs",
+    "demo:build": "node tools/scripts/demo-build.mjs",
     "build": "pnpm --filter @sift/extension build",
     "build:desktop": "pnpm --filter @sift/desktop build"
   },

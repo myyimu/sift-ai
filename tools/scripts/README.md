@@ -2,7 +2,7 @@
 
 ## 环境
 
-- Node.js >= 20、pnpm >= 10、Windows 10/11 x64（Demo 单目标，ADR-001 E-01/E-02）。
+- Node.js >= 22.23.0 且 <27、pnpm >= 10、Windows 10/11 x64（Demo 单目标，ADR-001 E-01/E-02）。
 - 依赖安装（仓库根）：`pnpm install`。
 
 ## 常用命令（仓库根）
@@ -13,6 +13,7 @@
 | `pnpm lint:ast` | 只检查 `apps/extension/src`（观察侧代码） |
 | `pnpm test` | vitest（shared 契约 / host framing+mode / eslint 规则正反例） |
 | `pnpm preflight` | 只读检查 Node、构建产物、Extension 权限、Native Host 注册和模型配置 |
+| `pnpm demo:build` | 依次构建 Extension、桌面端并生成 `pack2/win-unpacked` 目录包；不注册 Host |
 | `pnpm typecheck` | 各包 tsc --noEmit |
 | `pnpm build` | esbuild 打包 extension -> `apps/extension/dist/` |
 
