@@ -17,6 +17,7 @@ import { detectNativeHostLaunch } from '@sift/host/mode'
 import { runNativeHostLoop } from '@sift/host/host-loop'
 import { createCaptureProtocolHandler } from '@sift/host/capture-protocol'
 import { createNativeHostLease, defaultStoreRoot, openSiftStore, pruneExpiredData, type NativeHostLease, type SiftFsStore } from '@sift/store'
+import { markTopicCachesStale } from '@sift/topics'
 import { mkdir } from 'node:fs/promises'
 
 // node 模式下 argv = [exe, host-main.js, origin, --parent-window=N]
@@ -59,10 +60,25 @@ process.stderr.write(`[sift] host-main: capture protocol v1 loop, store at ${roo
 
 const capture = createCaptureProtocolHandler({ store })
 
+// Capture commit 改变了本地事实后，主题缓存必须先标记过期；不删除缓存文件，
+// 这样正在查看的旧投影仍可诊断，但下一次生成不会误用旧结果。
+const onCaptureMessage = async (message: unknown): Promise<unknown | null> => {
+  const response = await capture.onMessage(message)
+  if (typeof response === 'object' && response !== null && (response as { type?: unknown }).type === 'commit_ack' && (response as { deduplicated?: unknown }).deduplicated === false) {
+    try {
+      await markTopicCachesStale(rootDir, 'capture_changed')
+    } catch (error) {
+      // stale marker 是派生提示，不能让已成功提交的 Capture 因 marker 写盘失败而失败关闭。
+      process.stderr.write(`[sift] topic cache stale marker skipped: ${String(error)}\n`)
+    }
+  }
+  return response
+}
+
 runNativeHostLoop({
   stdin: process.stdin,
   stdout: process.stdout,
-  onMessage: capture.onMessage,
+  onMessage: onCaptureMessage,
   onFatal: (error) => {
     process.stderr.write(`[sift] host loop fatal: ${String(error)}\n`)
     process.exitCode = 1

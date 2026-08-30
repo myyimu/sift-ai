@@ -1,0 +1,40 @@
+export {
+  UNIT_EXTRACTOR_VERSION,
+  UNIT_NORMALIZER_VERSION,
+  canonicalUnitIdFor,
+  evidenceBlockIdFor,
+  materializeUnitVersions,
+  normalizeStableContent,
+  sha256Of,
+  stableContentFingerprint,
+  unitObservationIdFor,
+  unitVersionIdFor,
+  type CanonicalUnit,
+  type CaptureExtent,
+  type DerivedMetadata,
+  type EvidenceBlob,
+  type EvidenceBlock,
+  type ExtractionMode,
+  type IdentityKey,
+  type SourceMetadataSnapshot,
+  type UnitMaterialization,
+  type UnitObservation,
+  type UnitObservationSourceLink,
+  type UnitType,
+  type UnitVersion,
+  type UnitVersionEvidenceLink,
+  type UnitVersionObservationLink,
+} from './model'
+export { extractUnits, DEFAULT_UNIT_EXTRACTOR_LIMITS } from './extractor'
+export type { UnitExtractorInput, UnitExtractorLimits, UnitExtractorResult, UnitExtractorDiagnostics } from './extractor'
+export {
+  deleteUnitObservations,
+  emptyUnitLedger,
+  mergeCanonicalUnits,
+  observationsForSession,
+  resolveCanonicalId,
+  upsertUnitMaterialization,
+  type LedgerUpsertResult,
+  type UnitLedgerState,
+} from './ledger'
+export { pruneSessionUnitLedgers, readUnitLedger, sessionUnitLedgerPath, unitLedgerPath, writeUnitLedger, UNIT_LEDGER_SCHEMA_VERSION } from './ledger-file'

@@ -9,6 +9,9 @@ import { renderCoverageSummary } from '@sift/shared'
 import type { QuestionProjection } from '@sift/shared'
 import type { AskModelIpc, IpcResult, SiftBridge } from './preload'
 import type { DemoMetricEvent, StoredAnswer, StoreOverview } from '../qa-service'
+import { selectPromptPool } from '@sift/topics/prompt-pool'
+import { computeTopicRelations, layoutTopicCloud } from '@sift/topics/model'
+import type { TopicProjection, TopicStats } from '@sift/topics/model'
 
 declare const window: Window & { sift?: SiftBridge }
 
@@ -34,6 +37,7 @@ const storeMetaEl = $('store-meta')
 const modelMetaEl = $('model-meta')
 const scopeSelect = $('scope-select') as HTMLSelectElement
 const questionInput = $('question-input') as HTMLTextAreaElement
+const presetList = $('preset-list')
 const buildButton = $('build-button') as HTMLButtonElement
 const previewSection = $('preview-section')
 const previewStatsEl = $('preview-stats')
@@ -56,6 +60,13 @@ const deleteSessionButton = $('delete-session-button') as HTMLButtonElement
 const deletePageButton = $('delete-page-button') as HTMLButtonElement
 const deleteAllButton = $('delete-all-button') as HTMLButtonElement
 const deleteReportEl = $('delete-report')
+const topic7Button = $('topic-7-button') as HTMLButtonElement
+const topic30Button = $('topic-30-button') as HTMLButtonElement
+const topicConfirmButton = $('topic-confirm-button') as HTMLButtonElement
+const topicStatusEl = $('topic-status')
+const topicListEl = $('topic-list')
+const topicDetailEl = $('topic-detail')
+let pendingTopicDays: number | null = null
 
 type Tone = 'ok' | 'busy' | 'err'
 function setStatus(text: string, tone: Tone = 'busy'): void {
@@ -129,8 +140,13 @@ async function refreshOverview(): Promise<void> {
     modelMetaEl.textContent = result.value.modelConfig.configured
       ? `模型：${result.value.modelConfig.baseUrl} · ${result.value.modelConfig.model} · ctx≈${result.value.modelConfig.contextWindow}`
       : '模型未配置（SIFT_MODEL_BASE_URL/API_KEY/ID/CTX）'
+    renderPromptPool()
     renderScopeOptions()
     updateActionEnabled()
+    const topicCache = await bridge.topicCacheStatus()
+    if (topicCache.ok && topicCache.value.stale && pendingTopicDays === null) {
+      topicStatusEl.textContent = '捕获内容已有更新，当前主题图可能过期；请重新预览并生成。'
+    }
   } else {
     setStatus('本地存储未连接', 'err')
     storeMetaEl.textContent = result.message
@@ -142,6 +158,24 @@ function updateActionEnabled(): void {
   buildButton.disabled = questionInput.value.trim() === '' || scopeSelect.value === ''
   deleteSessionButton.disabled = !scopeSelect.value.startsWith('session:')
   deletePageButton.disabled = !scopeSelect.value.startsWith('page:')
+}
+
+function renderPromptPool(): void {
+  while (presetList.firstChild !== null) presetList.removeChild(presetList.firstChild)
+  const selectedPages = scopeSelect.value.startsWith('page:')
+    ? 1
+    : (overview?.sessions.find(session => `session:${session.sessionId}` === scopeSelect.value)?.pageInstanceIds.length ?? 0)
+  for (const preset of selectPromptPool({ pages: selectedPages }, 6)) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'preset'
+    button.textContent = preset.text
+    button.addEventListener('click', () => {
+      questionInput.value = preset.text
+      updateActionEnabled()
+    })
+    presetList.append(button)
+  }
 }
 
 // —— 投影与确认 ——
@@ -366,6 +400,136 @@ async function refreshAnswers(): Promise<void> {
   }
 }
 
+function topicRange(days: number): { readonly from: string; readonly to: string } {
+  const to = new Date()
+  return { from: new Date(to.getTime() - days * 24 * 60 * 60 * 1000).toISOString(), to: to.toISOString() }
+}
+
+async function onPrepareTopics(days: number): Promise<void> {
+  if (scopeSelect.value === '') return
+  topic7Button.disabled = true
+  topic30Button.disabled = true
+  topicConfirmButton.hidden = true
+  topicStatusEl.textContent = '正在本地计算主题范围（不会请求模型）'
+  while (topicListEl.firstChild !== null) topicListEl.removeChild(topicListEl.firstChild)
+  topicDetailEl.hidden = true
+  const range = topicRange(days)
+  const result = await bridge.previewTopics(scopeSelect.value, range.from, range.to)
+  topic7Button.disabled = false
+  topic30Button.disabled = false
+  if (!result.ok) { topicStatusEl.textContent = result.message; return }
+  const value = result.value
+  if (value.status === 'scope_parse_error' || value.status === 'invalid_input' || value.status === 'scope_not_found' || value.status === 'invalid_range') { topicStatusEl.textContent = value.message ?? '主题范围无效'; return }
+  if (value.status === 'projection_empty') { topicStatusEl.textContent = '范围内没有可分析的本地 Unit'; return }
+  if (value.status === 'limit_exceeded') { topicStatusEl.textContent = `超出主题分析上限：${value.usage.units} Units · ${value.usage.pages} Pages · ≈${value.usage.estimatedTokens} tokens，请缩小范围`; return }
+  if (value.status !== 'ok') { topicStatusEl.textContent = '主题范围预览失败'; return }
+  pendingTopicDays = days
+  topicConfirmButton.hidden = false
+  topicConfirmButton.focus()
+  topicStatusEl.textContent = `将发送到模型：${value.preview.units} Units · ${value.preview.pages} Pages · ${value.preview.domains} Domains · ≈${value.preview.estimatedTokens} tokens。仅发送上述本地捕获范围，确认后才会产生一次远程请求。`
+}
+
+async function onGenerateTopics(days: number): Promise<void> {
+  const range = topicRange(days)
+  topic7Button.disabled = true
+  topic30Button.disabled = true
+  topicConfirmButton.disabled = true
+  topicStatusEl.textContent = '正在生成主题（已获得本次远程处理确认）'
+  const result = await bridge.generateTopics(scopeSelect.value, range.from, range.to)
+  topic7Button.disabled = false
+  topic30Button.disabled = false
+  topicConfirmButton.disabled = false
+  topicConfirmButton.hidden = true
+  pendingTopicDays = null
+  if (!result.ok) { topicStatusEl.textContent = result.message; return }
+  const value = result.value
+  if (value.status === 'scope_parse_error' || value.status === 'invalid_input' || value.status === 'scope_not_found' || value.status === 'invalid_range') { topicStatusEl.textContent = value.message ?? '主题范围无效'; return }
+  if (value.status === 'model_unconfigured') { topicStatusEl.textContent = '模型未配置，主题地图不会发送请求'; return }
+  if (value.status === 'projection_empty') { topicStatusEl.textContent = '范围内没有可分析的本地 Unit'; return }
+  if (value.status === 'limit_exceeded') { topicStatusEl.textContent = `超出主题分析上限：${value.usage.units} Units · ${value.usage.pages} Pages · ≈${value.usage.estimatedTokens} tokens，请缩小范围`; return }
+  if (value.status === 'model_failed' || value.status === 'validation_failed') { topicStatusEl.textContent = value.status === 'model_failed' ? `${value.code}：${value.message}` : `主题引用校验失败：${value.reasons.join('；')}`; return }
+  if (value.status !== 'ok') { topicStatusEl.textContent = '主题地图生成失败'; return }
+  const projection: TopicProjection = value.projection
+  topicStatusEl.textContent = `${value.cacheHit ? '已从本地缓存加载' : '已生成并缓存'}：${value.preview.units} Units · ${value.preview.pages} Pages · ${value.preview.domains} Domains`
+  renderTopicCloud(projection, value.stats)
+}
+
+function renderTopicCloud(projection: TopicProjection, stats: readonly TopicStats[]): void {
+  while (topicListEl.firstChild !== null) topicListEl.removeChild(topicListEl.firstChild)
+  const width = 500
+  const height = 320
+  const layout = layoutTopicCloud(stats, width, height)
+  const byId = new Map(projection.topics.map(topic => [topic.topicId, topic]))
+  const cloud = document.createElement('div')
+  cloud.className = 'topic-cloud'
+  cloud.setAttribute('role', 'list')
+  cloud.setAttribute('aria-label', '主题云；节点大小表示去重后的 CanonicalUnit 数')
+  cloud.style.width = `${width}px`
+  cloud.style.height = `${height}px`
+  const relationLayer = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  relationLayer.classList.add('topic-relations')
+  relationLayer.setAttribute('aria-hidden', 'true')
+  relationLayer.setAttribute('viewBox', `0 0 ${width} ${height}`)
+  const centers = new Map(layout.map(node => [node.topicId, { x: node.x + node.width / 2, y: node.y + node.height / 2 }]))
+  for (const relation of computeTopicRelations(projection)) {
+    const from = centers.get(relation.fromTopicId)
+    const to = centers.get(relation.toTopicId)
+    if (from === undefined || to === undefined) continue
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+    line.setAttribute('x1', String(from.x)); line.setAttribute('y1', String(from.y)); line.setAttribute('x2', String(to.x)); line.setAttribute('y2', String(to.y))
+    line.setAttribute('stroke-width', String(Math.max(1, Math.round(relation.jaccardOverlap * 4))))
+    line.setAttribute('stroke', '#b8c4de')
+    relationLayer.append(line)
+  }
+  cloud.append(relationLayer)
+  for (const node of layout) {
+    const topic = byId.get(node.topicId)
+    if (topic === undefined) continue
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'topic-node'
+    button.setAttribute('role', 'listitem')
+    button.style.left = `${node.x}px`; button.style.top = `${node.y}px`; button.style.width = `${node.width}px`; button.style.height = `${node.height}px`
+    button.textContent = `${topic.label}（${new Set(topic.canonicalUnitRefs).size} Units）`
+    button.title = topic.summary
+    button.addEventListener('click', () => void onTopicDetail(projection, topic.topicId))
+    cloud.append(button)
+  }
+  topicListEl.append(cloud)
+  const note = document.createElement('p')
+  note.className = 'topic-cloud-note'
+  note.textContent = '节点大小＝去重后的 CanonicalUnit 数；连线粗细＝共同 Unit 的 Jaccard overlap。点击节点查看来源。'
+  topicListEl.append(note)
+}
+
+async function onTopicDetail(projection: TopicProjection, topicId: string): Promise<void> {
+  const result = await bridge.topicDetail(scopeSelect.value, projection, topicId)
+  while (topicDetailEl.firstChild !== null) topicDetailEl.removeChild(topicDetailEl.firstChild)
+  topicDetailEl.hidden = false
+  if (!result.ok) { topicDetailEl.textContent = result.message; return }
+  const value = result.value
+  if (value.status !== 'ok') { topicDetailEl.textContent = value.message ?? '主题详情不可用'; return }
+  const heading = document.createElement('h3')
+  heading.textContent = `${value.label} · 来源`
+  const summary = document.createElement('p')
+  summary.textContent = `AI 归纳：${value.summary}`
+  topicDetailEl.append(heading, summary)
+  for (const source of value.sources) {
+    const card = document.createElement('div')
+    card.className = 'topic-source'
+    const meta = document.createElement('p')
+    meta.className = 'meta'
+    meta.textContent = `${source.title ?? '未命名内容'} · ${source.captureExtent} · ${source.observedAt}`
+    const text = document.createElement('p')
+    text.textContent = source.text
+    const ref = document.createElement('p')
+    ref.className = 'refs'
+    ref.textContent = `${source.evidenceBlockId} · ${source.canonicalUnitId}`
+    card.append(meta, text, ref)
+    topicDetailEl.append(card)
+  }
+}
+
 // —— 数据控制（验收门 14 最小实现） ——
 
 async function onDeleteSession(): Promise<void> {
@@ -429,6 +593,9 @@ cancelButton.addEventListener('click', () => {
 deleteSessionButton.addEventListener('click', () => void onDeleteSession())
 deletePageButton.addEventListener('click', () => void onDeletePage())
 deleteAllButton.addEventListener('click', () => void onDeleteAll())
+topic7Button.addEventListener('click', () => void onPrepareTopics(7))
+topic30Button.addEventListener('click', () => void onPrepareTopics(30))
+topicConfirmButton.addEventListener('click', () => { if (pendingTopicDays !== null) void onGenerateTopics(pendingTopicDays) })
 timeSavedButton.addEventListener('click', () => {
   if (activeEvaluation === null) return
   const minutes = Number(timeSavedInput.value)
@@ -440,13 +607,10 @@ timeSavedButton.addEventListener('click', () => {
   evaluationReportEl.textContent = '已记录主观节省时间'
 })
 questionInput.addEventListener('input', updateActionEnabled)
-scopeSelect.addEventListener('change', updateActionEnabled)
-for (const preset of Array.from(document.querySelectorAll<HTMLButtonElement>('.preset'))) {
-  preset.addEventListener('click', () => {
-    questionInput.value = preset.dataset.q ?? ''
-    updateActionEnabled()
-  })
-}
+scopeSelect.addEventListener('change', () => {
+  updateActionEnabled()
+  renderPromptPool()
+})
 bridge.onOverviewUpdated(() => void refreshOverview())
 
 void refreshOverview()

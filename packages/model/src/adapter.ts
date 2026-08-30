@@ -40,6 +40,18 @@ export interface CompleteAnswerInput {
   readonly coverage: CoverageManifest
 }
 
+export interface CompleteJsonInput<T> {
+  readonly system: string
+  readonly user: string
+  readonly schemaName: string
+  readonly schema: unknown
+  readonly validate: (candidate: unknown) => { readonly ok: true; readonly value: T } | { readonly ok: false; readonly reasons: readonly string[] }
+}
+
+export type JsonModelResult<T> =
+  | { readonly status: 'ok'; readonly value: T }
+  | { readonly status: 'failed'; readonly code: ModelFailureCode; readonly message: string }
+
 interface ChatMessage {
   readonly role: 'system' | 'user'
   readonly content: string
@@ -65,6 +77,7 @@ function stripFences(text: string): string {
 
 export interface ModelAdapter {
   completeAnswer(input: CompleteAnswerInput): Promise<ModelResult>
+  completeJson<T>(input: CompleteJsonInput<T>): Promise<JsonModelResult<T>>
 }
 
 export function createModelAdapter(options: {
@@ -173,6 +186,52 @@ export function createModelAdapter(options: {
         }
         last = { code: outcome.code, message: outcome.message }
         if (!outcome.retryable) return { status: 'failed', ...last }
+      }
+      return { status: 'failed', ...last }
+    },
+    async completeJson<T>(input: CompleteJsonInput<T>): Promise<JsonModelResult<T>> {
+      let strict = true
+      let last: { code: ModelFailureCode; message: string } = { code: 'model_transport', message: 'unreachable' }
+      for (let call = 0; call < 2; call += 1) {
+        const messages: ChatMessage[] = [
+          { role: 'system', content: input.system },
+          { role: 'user', content: input.user },
+        ]
+        const responseFormat = strict
+          ? { type: 'json_schema', json_schema: { name: input.schemaName, strict: true, schema: input.schema } }
+          : { type: 'json_object' }
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), timeoutMs)
+        let response: Response
+        try {
+          response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
+            method: 'POST', headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ model: config.model, messages, temperature: 0, response_format: responseFormat }),
+            redirect: 'manual', signal: controller.signal,
+          })
+        } catch (error) {
+          last = { code: controller.signal.aborted ? 'model_timeout' : 'model_transport', message: redact(String(error)) }
+          clearTimeout(timer)
+          continue
+        } finally {
+          clearTimeout(timer)
+        }
+        if (response.status >= 300 && response.status < 400) return { status: 'failed', code: 'model_redirect_rejected', message: `model_redirect_rejected: 端点返回 ${response.status}（禁止自动跟随重定向）` }
+        if (!response.ok) {
+          const text = redact((await response.text()).slice(0, 500))
+          if (strict && response.status === 400 && /response_format|json_schema/i.test(text)) { strict = false; continue }
+          last = { code: 'model_http', message: `model_http ${response.status}: ${text}` }
+          continue
+        }
+        let payload: unknown
+        try { payload = await response.json() } catch (error) { last = { code: 'model_invalid_json', message: `model_invalid_json: ${String(error)}` }; continue }
+        const content = (payload as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content
+        if (typeof content !== 'string' || content.trim() === '') { last = { code: 'model_invalid_json', message: 'model_invalid_json: 响应缺少 choices[0].message.content' }; continue }
+        let candidate: unknown
+        try { candidate = JSON.parse(stripFences(content)) } catch (error) { last = { code: 'model_invalid_json', message: `model_invalid_json: ${String(error)}` }; continue }
+        const validation = input.validate(candidate)
+        if (!validation.ok) { last = { code: 'model_validation_failed', message: validation.reasons.join('；') }; continue }
+        return { status: 'ok', value: validation.value }
       }
       return { status: 'failed', ...last }
     },

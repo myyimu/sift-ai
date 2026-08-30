@@ -16,13 +16,16 @@ import {
   answersDirOf,
   askModel,
   buildProjectionForScope,
+  extractUnitsForScope,
   deletePageStoreData,
   getStoreOverview,
   listAnswers,
   parseScope,
   deleteAllStoreData,
   recordDemoMetric,
+  rebuildUnitLedger,
 } from '../src/qa-service'
+import { readUnitLedger, sessionUnitLedgerPath, unitLedgerPath } from '@sift/units'
 import type { ModelConfig } from '@sift/model'
 
 // —— 夹具 ——
@@ -187,6 +190,22 @@ describe('getStoreOverview', () => {
   })
 })
 
+describe('rebuildUnitLedger', () => {
+  it('rebuilds a compact derived ledger from the journal without network', async () => {
+    await seedTwoPages()
+    await writer!.close()
+    writer = null
+    const result = await rebuildUnitLedger(root)
+    expect(result.sessions).toBe(1)
+    expect(result.observations).toBeGreaterThan(0)
+    const ledger = await readUnitLedger(unitLedgerPath(root))
+    expect(ledger.observations.length).toBe(result.observations)
+    expect(ledger.evidenceBlocks.length).toBe(result.evidenceBlocks)
+    const sessionLedger = await readUnitLedger(sessionUnitLedgerPath(root, 'sess-1'))
+    expect(sessionLedger.observations.length).toBe(result.observations)
+  })
+})
+
 describe('buildProjectionForScope', () => {
   it('current_page：投影 ok、blocks ≥1、全程零 fetch', async () => {
     await seedTwoPages()
@@ -312,6 +331,45 @@ describe('buildProjectionForScope', () => {
     expect(parseScope('latest-session', undefined)).toMatchObject({ error: expect.stringContaining('session') })
     expect(parseScope('page:', undefined)).toMatchObject({ error: expect.stringContaining('pageInstanceId') })
     expect(parseScope('whatever', 's-1')).toMatchObject({ error: expect.stringContaining('scope') })
+  })
+})
+
+describe('extractUnitsForScope', () => {
+  it('从已有脱敏快照离线抽取 Unit，并不触发网络或模型', async () => {
+    await seedTwoPages()
+    await writer!.close()
+    writer = null
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.reject(new Error('不许网络')))
+    const result = await extractUnitsForScope(root, { kind: 'demo_session', sessionId: 'sess-1' })
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
+    expect(result.status).toBe('ok')
+    if (result.status !== 'ok') return
+    expect(result.snapshots).toBe(2)
+    expect(result.observations.length).toBeGreaterThanOrEqual(2)
+    expect(result.canonicalUnits.length).toBe(result.materialization.canonicalUnits.length)
+    expect(result.evidenceBlobs.every(blob => blob.text.length > 0)).toBe(true)
+  })
+
+  it('同一 Session/Page 的稳定重访只追加 source link，不重复产生 Observation', async () => {
+    await seedTwoPages()
+    await append(
+      { id: 'a-2', pageInstanceId: 'page-a', sequence: 2 },
+      snapPayload(PAGE_A_HTML.replace('本地优先的数据观察', '  本地优先的数据观察  '), 'https://example.com/a'),
+    )
+    await append(
+      { id: 'b-2', pageInstanceId: 'page-b', sequence: 2 },
+      snapPayload(PAGE_B_HTML, 'https://example.com/b?page=2'),
+    )
+    await writer!.close()
+    writer = null
+    const result = await extractUnitsForScope(root, { kind: 'demo_session', sessionId: 'sess-1' })
+    expect(result.status).toBe('ok')
+    if (result.status !== 'ok') return
+    expect(result.snapshots).toBe(3)
+    expect(result.observations).toHaveLength(2)
+    expect(result.sourceLinks).toHaveLength(4)
+    expect(new Set(result.sourceLinks.map(link => link.unitObservationId)).size).toBe(2)
   })
 })
 

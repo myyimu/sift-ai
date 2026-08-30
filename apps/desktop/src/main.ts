@@ -34,8 +34,11 @@ import {
   parseScope,
   pruneExpiredAnswerFiles,
   recordDemoMetric,
+  rebuildUnitLedger,
   resolveStoreRoot,
 } from './qa-service'
+import { generateTopicProjection, invalidateTopicCaches, previewTopicProjection, topicDetail } from './topic-service'
+import { hasStaleTopicCaches } from '@sift/topics'
 import { loadModelConfig, modelConfigSummary } from '@sift/model'
 import type { QuestionProjection } from '@sift/shared'
 import { sanitizeUrl } from '@sift/shared'
@@ -103,6 +106,48 @@ if (isHost) {
           return fail(error)
         }
       })
+      ipcMain.handle('sift:generate-topics', async (_e, raw: unknown) => {
+        try {
+          const value = raw as { scopeRaw?: unknown; from?: unknown; to?: unknown }
+          if (typeof value.scopeRaw !== 'string' || typeof value.from !== 'string' || typeof value.to !== 'string') return ok({ status: 'invalid_input' as const, message: '主题范围参数无效' })
+          const overview = await getStoreOverview(rootDir)
+          const latest = overview.sessions.length > 0 ? overview.sessions[overview.sessions.length - 1]!.sessionId : undefined
+          const scope = parseScope(value.scopeRaw, latest)
+          if ('error' in scope) return ok({ status: 'scope_parse_error' as const, message: scope.error })
+          const config = loadModelConfig(process.env)
+          if (config.status !== 'ok') return ok({ status: 'model_unconfigured' as const, missing: config.status === 'model_config_missing' ? config.missing : [], reason: config.status === 'model_origin_rejected' ? config.reason : '' })
+          return ok(await generateTopicProjection(rootDir, scope, { from: value.from, to: value.to }, config.config))
+        } catch (error) {
+          return fail(error)
+        }
+      })
+      ipcMain.handle('sift:preview-topics', async (_e, raw: unknown) => {
+        try {
+          const value = raw as { scopeRaw?: unknown; from?: unknown; to?: unknown }
+          if (typeof value.scopeRaw !== 'string' || typeof value.from !== 'string' || typeof value.to !== 'string') return ok({ status: 'invalid_input' as const, message: '主题范围参数无效' })
+          const overview = await getStoreOverview(rootDir)
+          const latest = overview.sessions.length > 0 ? overview.sessions[overview.sessions.length - 1]!.sessionId : undefined
+          const scope = parseScope(value.scopeRaw, latest)
+          if ('error' in scope) return ok({ status: 'scope_parse_error' as const, message: scope.error })
+          return ok(await previewTopicProjection(rootDir, scope, { from: value.from, to: value.to }))
+        } catch (error) {
+          return fail(error)
+        }
+      })
+      ipcMain.handle('sift:topic-detail', async (_e, raw: unknown) => {
+        try {
+          const value = raw as { scopeRaw?: unknown; topicId?: unknown; projection?: unknown }
+          if (typeof value.scopeRaw !== 'string' || typeof value.topicId !== 'string' || typeof value.projection !== 'object' || value.projection === null) return ok({ status: 'invalid_input' as const, message: '主题详情参数无效' })
+          const overview = await getStoreOverview(rootDir)
+          const latest = overview.sessions.length > 0 ? overview.sessions[overview.sessions.length - 1]!.sessionId : undefined
+          const scope = parseScope(value.scopeRaw, latest)
+          if ('error' in scope) return ok({ status: 'scope_parse_error' as const, message: scope.error })
+          return ok(await topicDetail(rootDir, scope, value.projection as import('@sift/topics').TopicProjection, value.topicId))
+        } catch (error) {
+          return fail(error)
+        }
+      })
+      ipcMain.handle('sift:topic-cache-status', () => hasStaleTopicCaches(rootDir).then(stale => ok({ stale }), fail))
       ipcMain.handle('sift:ask-model', async (_e, raw: unknown) => {
         try {
           const { projection } = raw as { projection: QuestionProjection }
@@ -136,14 +181,19 @@ if (isHost) {
         recordDemoMetric(rootDir, raw).then(() => ok(undefined), fail))
       ipcMain.handle('sift:list-answers', () => listAnswers(rootDir).then(ok, fail))
       ipcMain.handle('sift:delete-session', (_e, raw: unknown) =>
-        deleteSessionStoreData(rootDir, (raw as { sessionId: string }).sessionId).then(ok, fail))
+        deleteSessionStoreData(rootDir, (raw as { sessionId: string }).sessionId).then(async value => { await invalidateTopicCaches(rootDir); await rebuildUnitLedger(rootDir); return ok(value) }, fail))
       ipcMain.handle('sift:delete-page', (_e, raw: unknown) =>
-        deletePageStoreData(rootDir, (raw as { pageInstanceId: string }).pageInstanceId).then(ok, fail))
-      ipcMain.handle('sift:delete-all', () => deleteAllStoreData(rootDir).then(() => ok(undefined), fail))
+        deletePageStoreData(rootDir, (raw as { pageInstanceId: string }).pageInstanceId).then(async value => { await invalidateTopicCaches(rootDir); await rebuildUnitLedger(rootDir); return ok(value) }, fail))
+      ipcMain.handle('sift:delete-all', () => deleteAllStoreData(rootDir).then(async () => { await invalidateTopicCaches(rootDir); await rebuildUnitLedger(rootDir); return ok(undefined) }, fail))
       ipcMain.handle('sift:model-config', () => Promise.resolve(ok(modelConfigSummary(loadModelConfig(process.env)))))
 
       await win.loadFile(join(app.getAppPath(), 'dist', 'ui', 'index.html'))
       process.stderr.write('[sift] UI mode ready\n')
+
+      // 派生 Unit Ledger 在 UI 就绪后异步重建；不阻塞首屏，也不触碰 capture host 的写路径。
+      void rebuildUnitLedger(rootDir).catch(error => {
+        process.stderr.write(`[sift] unit ledger rebuild skipped: ${String(error)}\n`)
+      })
 
       // —— 概览刷新：5s 轮询 + focus 即刻刷新 ——
 

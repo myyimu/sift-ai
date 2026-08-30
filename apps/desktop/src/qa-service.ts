@@ -35,6 +35,25 @@ import {
   type ModelConfigSummary,
   type ModelResult,
 } from '@sift/model'
+import {
+  extractUnits,
+  materializeUnitVersions,
+  emptyUnitLedger,
+  upsertUnitMaterialization,
+  unitLedgerPath,
+  sessionUnitLedgerPath,
+  pruneSessionUnitLedgers,
+  writeUnitLedger,
+  type CanonicalUnit,
+  type DerivedMetadata,
+  type EvidenceBlob,
+  type EvidenceBlock,
+  type UnitExtractorDiagnostics,
+  type UnitObservation,
+  type UnitObservationSourceLink,
+  type UnitMaterialization,
+  type UnitLedgerState,
+} from '@sift/units'
 
 // —— scope ——
 
@@ -108,6 +127,162 @@ export type BuildProjectionResult =
       readonly usage: { readonly pages: number; readonly blocks: number; readonly utf8Bytes: number; readonly estimatedTokens: number }
       readonly limits: { readonly maxPages: number; readonly maxBlocks: number; readonly maxUtf8Bytes: number; readonly maxEstimatedTokens: number }
     }
+
+export type ExtractUnitsScopeResult =
+  | {
+      readonly status: 'ok'
+      readonly observations: readonly UnitObservation[]
+      readonly sourceLinks: readonly UnitObservationSourceLink[]
+      readonly canonicalUnits: readonly CanonicalUnit[]
+      readonly derivedMetadata: readonly DerivedMetadata[]
+      readonly evidenceBlocks: readonly EvidenceBlock[]
+      readonly evidenceBlobs: readonly EvidenceBlob[]
+      readonly materialization: UnitMaterialization
+      readonly diagnostics: readonly UnitExtractorDiagnostics[]
+      readonly snapshots: number
+    }
+  | { readonly status: 'scope_not_found'; readonly message: string }
+  | { readonly status: 'projection_empty' }
+
+/**
+ * P0.5 离线 UnitExtractor 读侧入口：只读取已经落盘的脱敏 snapshot，绝不联网。
+ * 每个 distinct snapshot 形成不可变 UnitObservation；跨快照版本在此统一物化。
+ */
+export async function extractUnitsForScope(rootDir: string, scope: QaScope): Promise<ExtractUnitsScopeResult> {
+  const store = await openSiftStore({ rootDir, readOnly: true })
+  try {
+    const allPages = await store.listPages()
+    const pages = scope.kind === 'current_page'
+      ? allPages.filter(page => page.pageInstanceId === scope.pageInstanceId)
+      : allPages.filter(page => page.sessionId === scope.sessionId)
+    if (pages.length === 0) {
+      return { status: 'scope_not_found', message: scope.kind === 'current_page' ? `store 中没有 pageInstanceId ${scope.pageInstanceId}` : `store 中没有 session ${scope.sessionId}` }
+    }
+    const journal = await store.readJournal(scope.kind === 'current_page' ? { pageInstanceId: scope.pageInstanceId } : { sessionId: scope.sessionId })
+    const rowsByPage = new Map<string, ObservationEnvelope[]>()
+    for (const row of journal) {
+      const list = rowsByPage.get(row.pageInstanceId)
+      if (list !== undefined) list.push(row)
+      else rowsByPage.set(row.pageInstanceId, [row])
+    }
+    const allObservations: UnitObservation[] = []
+    const allSourceLinks: UnitObservationSourceLink[] = []
+    const allCanonical = new Map<string, CanonicalUnit>()
+    const allMetadata: DerivedMetadata[] = []
+    const allEvidenceBlocks: EvidenceBlock[] = []
+    const allEvidenceBlobs = new Map<string, EvidenceBlob>()
+    const observationByStableKey = new Map<string, UnitObservation>()
+    const diagnostics: UnitExtractorDiagnostics[] = []
+    let snapshots = 0
+    for (const page of pages) {
+      if (page.snapshotBlobRef === '') continue
+      let lastApplied = -1
+      let stateVersion = 0
+      const firstSeen = new Map<string, { stateVersion: number; receivedAt: string; sourceObservationId: string }>()
+      const sourceRowsByHash = new Map<string, Array<{ sourceObservationId: string; receivedAt: string }>>()
+      for (const row of rowsByPage.get(page.pageInstanceId) ?? []) {
+        if (row.sequence <= lastApplied) continue
+        stateVersion += 1
+        lastApplied = row.sequence
+        if (row.type === 'dom_snapshot') {
+          const sourceRows = sourceRowsByHash.get(row.payloadHash) ?? []
+          sourceRows.push({ sourceObservationId: row.id, receivedAt: row.receivedAt })
+          sourceRowsByHash.set(row.payloadHash, sourceRows)
+          if (!firstSeen.has(row.payloadHash)) firstSeen.set(row.payloadHash, { stateVersion, receivedAt: row.receivedAt, sourceObservationId: row.id })
+        }
+      }
+      const entries = [] as Array<{ payloadHash: string; payload: DomSnapshotPayload; stateVersion: number; receivedAt: string; sourceObservationId: string; sourceRows: readonly { sourceObservationId: string; receivedAt: string }[]; key: string }>
+      for (const [payloadHash, seen] of firstSeen) {
+        const payload = await store.readSnapshotPayload(payloadHash)
+        entries.push({ payloadHash, payload, ...seen, sourceRows: sourceRowsByHash.get(payloadHash) ?? [ { sourceObservationId: seen.sourceObservationId, receivedAt: seen.receivedAt } ], key: snapshotGroupKey(payload.url, payload.title) })
+      }
+      const currentKey = entries.find(entry => entry.payloadHash === page.snapshotBlobRef)?.key
+      const selected = scope.kind === 'current_page' ? entries.filter(entry => entry.key === currentKey) : entries
+      for (const entry of selected) {
+        const result = extractUnits({
+          html: entry.payload.html,
+          sourceObservationId: entry.sourceObservationId,
+          sessionId: page.sessionId,
+          pageInstanceId: page.pageInstanceId,
+          stateVersion: entry.stateVersion,
+          safeUrl: entry.payload.url,
+          ...(entry.payload.title === '' ? {} : { title: entry.payload.title }),
+          observedAt: entry.receivedAt,
+          captureExtent: 'unknown',
+        })
+        diagnostics.push(result.diagnostics)
+        snapshots += 1
+        if (result.status !== 'ok') continue
+        for (const observation of result.observations) {
+          // 同一 Session/Page 的稳定内容与 extent 只保留一条不可变 Observation；
+          // 后续捕获只追加幂等 source link，避免重访把 Topic unitCount 放大。
+          const stableKey = `${observation.sessionId}|${observation.pageInstanceId}|${observation.canonicalUnitId}|${observation.stableContentFingerprint}|${observation.captureExtent}`
+          const retained = observationByStableKey.get(stableKey)
+          if (retained === undefined) {
+            observationByStableKey.set(stableKey, observation)
+            allObservations.push(observation)
+            allEvidenceBlocks.push(...observation.evidenceBlocks)
+            for (const sourceRow of entry.sourceRows) allSourceLinks.push({ unitObservationId: observation.id, sourceObservationId: sourceRow.sourceObservationId, linkedAt: sourceRow.receivedAt })
+          } else {
+            for (const sourceRow of entry.sourceRows) allSourceLinks.push({ unitObservationId: retained.id, sourceObservationId: sourceRow.sourceObservationId, linkedAt: sourceRow.receivedAt })
+          }
+        }
+        for (const unit of result.canonicalUnits) if (!allCanonical.has(unit.id)) allCanonical.set(unit.id, unit)
+        for (const metadata of result.derivedMetadata) {
+          if (!allMetadata.some(item => item.canonicalUnitId === metadata.canonicalUnitId && item.parserVersion === metadata.parserVersion)) allMetadata.push(metadata)
+        }
+        for (const blob of result.evidenceBlobs) allEvidenceBlobs.set(blob.id, blob)
+      }
+    }
+    if (allObservations.length === 0) return { status: 'projection_empty' }
+    const canonicalUnits = [...allCanonical.values()].sort((a, b) => a.id.localeCompare(b.id))
+    return {
+      status: 'ok', observations: allObservations, sourceLinks: allSourceLinks, canonicalUnits,
+      derivedMetadata: allMetadata, evidenceBlocks: allEvidenceBlocks,
+      evidenceBlobs: [...allEvidenceBlobs.values()].sort((a, b) => a.id.localeCompare(b.id)),
+      materialization: materializeUnitVersions(allObservations, canonicalUnits), diagnostics, snapshots,
+    }
+  } finally {
+    await store.close()
+  }
+}
+
+export type RebuildUnitLedgerResult = {
+  readonly sessions: number
+  readonly observations: number
+  readonly canonicalUnits: number
+  readonly evidenceBlocks: number
+}
+
+/**
+ * 从不可变 Capture Journal 重建派生 Unit Ledger，并以单次原子替换落盘。
+ * 这是启动/手动维护路径，不在 host capture 热路径执行；任一 scope 损坏时不覆盖旧 ledger。
+ */
+export async function rebuildUnitLedger(rootDir: string): Promise<RebuildUnitLedgerResult> {
+  const store = await openSiftStore({ rootDir, readOnly: true })
+  try {
+    const sessions = await store.listSessions()
+    let state = emptyUnitLedger()
+    const sessionStates = new Map<string, UnitLedgerState>()
+    for (const session of sessions) {
+      const extracted = await extractUnitsForScope(rootDir, { kind: 'demo_session', sessionId: session.sessionId })
+      if (extracted.status === 'scope_not_found') continue
+      if (extracted.status === 'projection_empty') continue
+      const result = upsertUnitMaterialization(state, extracted)
+      if (result.status !== 'ok') throw new Error(`Unit Ledger 重建冲突：${result.observationId}`)
+      state = result.state
+      const sessionResult = upsertUnitMaterialization(sessionStates.get(session.sessionId) ?? emptyUnitLedger(), extracted)
+      if (sessionResult.status !== 'ok') throw new Error(`Session Unit Ledger 重建冲突：${sessionResult.observationId}`)
+      sessionStates.set(session.sessionId, sessionResult.state)
+    }
+    for (const [sessionId, sessionState] of sessionStates) await writeUnitLedger(sessionUnitLedgerPath(rootDir, sessionId), sessionState)
+    await writeUnitLedger(unitLedgerPath(rootDir), state)
+    await pruneSessionUnitLedgers(rootDir, new Set(sessionStates.keys()))
+    return { sessions: sessions.length, observations: state.observations.length, canonicalUnits: state.canonicalUnits.length, evidenceBlocks: state.evidenceBlocks.length }
+  } finally {
+    await store.close()
+  }
+}
 
 /**
  * 组装 scope 内的投影事实并调用 projectQuestion。全程零网络、零模型调用——

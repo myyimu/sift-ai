@@ -20,7 +20,9 @@
     "@sift/model": "workspace:*",
     "@sift/projector": "workspace:*",
     "@sift/shared": "workspace:*",
-    "@sift/store": "workspace:*"
+    "@sift/store": "workspace:*",
+    "@sift/units": "workspace:*",
+    "@sift/topics": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -26,11 +26,7 @@
   <section id="question-section">
     <label for="question-input">问题</label>
     <textarea id="question-input" rows="3" placeholder="只依据已观察到的页面内容提问"></textarea>
-    <div class="presets">
-      <button type="button" class="preset" data-q="这个页面主要讲了什么？">这个页面主要讲了什么？</button>
-      <button type="button" class="preset" data-q="页面里提到了哪些数据或结论？">页面里提到了哪些数据或结论？</button>
-      <button type="button" class="preset" data-q="页面没有覆盖哪些内容（覆盖缺口）？">覆盖缺口是什么？</button>
-    </div>
+    <div id="preset-list" class="presets" aria-label="预设问题"></div>
     <button type="button" id="build-button" disabled>生成问题投影（不发送）</button>
   </section>
 
@@ -70,6 +66,19 @@
       </div>
       <p id="evaluation-report" class="evaluation-report"></p>
     </div>
+  </section>
+
+  <section id="topic-section" aria-labelledby="topic-title">
+    <h2 id="topic-title">主题地图（按需生成）</h2>
+    <p class="hint">只分析本地已捕获内容；点击按钮后才会请求模型。</p>
+    <div class="topic-actions">
+      <button type="button" id="topic-7-button">生成最近 7 天主题</button>
+      <button type="button" id="topic-30-button">生成最近 30 天主题</button>
+      <button type="button" id="topic-confirm-button" hidden>确认发送到模型</button>
+    </div>
+    <p id="topic-status" class="topic-status"></p>
+    <div id="topic-list" class="topic-list"></div>
+    <div id="topic-detail" class="topic-detail" hidden></div>
   </section>
 
   <section id="answers-section">

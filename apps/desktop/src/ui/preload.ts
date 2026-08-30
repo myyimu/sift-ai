@@ -5,6 +5,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { DemoMetricEvent, StoreOverview, BuildProjectionResult, StoredAnswerSummary } from '../qa-service'
 import type { ModelConfigSummary } from '@sift/model'
 import type { QuestionProjection } from '@sift/shared'
+import type { TopicDetailResult, TopicGenerationResult, TopicPreviewResult } from '../topic-service'
+import type { TopicProjection } from '@sift/topics'
 
 export interface IpcFail {
   readonly ok: false
@@ -22,6 +24,10 @@ export type AskModelIpc =
 export interface SiftBridge {
   overview(): Promise<IpcResult<StoreOverview>>
   buildProjection(scopeRaw: string, question: string): Promise<IpcResult<BuildProjectionResult | { status: 'scope_parse_error'; message: string }>>
+  generateTopics(scopeRaw: string, from: string, to: string): Promise<IpcResult<TopicGenerationResult | { status: 'scope_parse_error' | 'invalid_input' | 'model_unconfigured'; message?: string; missing?: readonly string[]; reason?: string }>>
+  previewTopics(scopeRaw: string, from: string, to: string): Promise<IpcResult<TopicPreviewResult | { status: 'scope_parse_error' | 'invalid_input'; message?: string }>>
+  topicDetail(scopeRaw: string, projection: TopicProjection, topicId: string): Promise<IpcResult<TopicDetailResult | { status: 'scope_parse_error' | 'invalid_input'; message?: string }>>
+  topicCacheStatus(): Promise<IpcResult<{ readonly stale: boolean }>>
   askModel(projection: QuestionProjection): Promise<IpcResult<AskModelIpc>>
   listAnswers(): Promise<IpcResult<readonly StoredAnswerSummary[]>>
   deleteSession(sessionId: string): Promise<IpcResult<{ removedObservations: number; removedPages: number; removedBlobs: number }>>
@@ -39,6 +45,10 @@ const bridge: SiftBridge = {
     ipcRenderer.invoke('sift:build-projection', { scopeRaw, question }) as Promise<
       IpcResult<BuildProjectionResult | { status: 'scope_parse_error'; message: string }>
     >,
+  generateTopics: (scopeRaw, from, to) => ipcRenderer.invoke('sift:generate-topics', { scopeRaw, from, to }) as Promise<IpcResult<TopicGenerationResult | { status: 'scope_parse_error' | 'invalid_input' | 'model_unconfigured'; message?: string; missing?: readonly string[]; reason?: string }>>,
+  previewTopics: (scopeRaw, from, to) => ipcRenderer.invoke('sift:preview-topics', { scopeRaw, from, to }) as Promise<IpcResult<TopicPreviewResult | { status: 'scope_parse_error' | 'invalid_input'; message?: string }>>,
+  topicDetail: (scopeRaw, projection, topicId) => ipcRenderer.invoke('sift:topic-detail', { scopeRaw, projection, topicId }) as Promise<IpcResult<TopicDetailResult | { status: 'scope_parse_error' | 'invalid_input'; message?: string }>>,
+  topicCacheStatus: () => ipcRenderer.invoke('sift:topic-cache-status') as Promise<IpcResult<{ readonly stale: boolean }>>,
   askModel: projection => ipcRenderer.invoke('sift:ask-model', { projection }) as Promise<IpcResult<AskModelIpc>>,
   listAnswers: () => ipcRenderer.invoke('sift:list-answers') as Promise<IpcResult<readonly StoredAnswerSummary[]>>,
   deleteSession: sessionId =>

@@ -16,6 +16,7 @@
 export { deriveCoverageManifest, snapshotGroupKey } from './manifest'
 export type { ManifestInput, ManifestObservation, ManifestPageState } from './manifest'
 export { extractBlocks, normalizeBlockText, textHashOf } from './extract'
+export type { ExtractedBlock } from './extract'
 export { projectQuestion } from './project'
 export type { ManifestFacts, ProjectQuestionParams, ProjectorPageInput, ProjectorResult } from './project'
 export type { QuestionProjection } from '@sift/shared'

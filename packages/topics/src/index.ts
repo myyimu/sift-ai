@@ -1,0 +1,30 @@
+export {
+  TOPIC_LAYOUT_VERSION,
+  TOPIC_PROJECTION_VERSION,
+  TOPIC_PROMPT_VERSION,
+  computeTopicRelations,
+  computeTopicStats,
+  layoutTopicCloud,
+  validateTopicProjection,
+  type TopicLayoutNode,
+  type TopicProjection,
+  type TopicProjectionAnalyzer,
+  type TopicProjectionScope,
+  type TopicProjectionTopic,
+  type TopicRelation,
+  type TopicStats,
+  type TopicValidationResult,
+} from './model'
+export {
+  clearTopicCachesStale,
+  clearTopicCachesStaleBefore,
+  hasStaleTopicCaches,
+  invalidateTopicCaches,
+  markTopicCachesStale,
+  readTopicStaleMarker,
+  topicCacheDir,
+  topicStaleMarkerPath,
+  TOPIC_CACHE_SCHEMA_VERSION,
+  type TopicStaleMarker,
+} from './cache'
+export { PROMPT_POOL_VERSION, promptPool, selectPromptPool, type PromptPoolContext, type PromptPreset } from './prompt-pool'

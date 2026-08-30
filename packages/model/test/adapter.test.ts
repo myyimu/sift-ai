@@ -166,6 +166,23 @@ describe('createModelAdapter.completeAnswer', () => {
   })
 })
 
+describe('createModelAdapter.completeJson', () => {
+  it('支持 schema 请求与本地校验回调，非法结果按两次上限失败', async () => {
+    const { fetch, calls } = scriptedFetch([
+      () => Promise.resolve(jsonResponse(chatCompletion(JSON.stringify({ ok: true })))),
+    ])
+    const result = await createModelAdapter({ config: CONFIG, fetchImpl: fetch }).completeJson({
+      system: '只输出 JSON', user: '返回 ok', schemaName: 'demo', schema: { type: 'object' },
+      validate: candidate => candidate !== null && typeof candidate === 'object' && (candidate as { ok?: unknown }).ok === true
+        ? { ok: true as const, value: 'accepted' }
+        : { ok: false as const, reasons: ['invalid'] },
+    })
+    expect(result).toEqual({ status: 'ok', value: 'accepted' })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.body.response_format.json_schema.name).toBe('demo')
+  })
+})
+
 describe('ANSWER_PROJECTION_JSON_SCHEMA ↔ zod 一致性', () => {
   const ajv = new Ajv({ strict: false })
   const validateJsonSchema = ajv.compile(ANSWER_PROJECTION_JSON_SCHEMA as object)

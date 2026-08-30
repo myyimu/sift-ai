@@ -44,6 +44,12 @@ importers:
       '@sift/store':
         specifier: workspace:*
         version: link:../../packages/store
+      '@sift/topics':
+        specifier: workspace:*
+        version: link:../../packages/topics
+      '@sift/units':
+        specifier: workspace:*
+        version: link:../../packages/units
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -155,6 +161,38 @@ importers:
         version: 22.20.1
       vitest:
         specifier: ^3.0.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@22.20.1)(jiti@2.7.0)
+
+  packages/topics:
+    dependencies:
+      '@sift/units':
+        specifier: workspace:*
+        version: link:../units
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@22.20.1)(jiti@2.7.0)
+
+  packages/units:
+    dependencies:
+      '@sift/projector':
+        specifier: workspace:*
+        version: link:../projector
+      '@sift/shared':
+        specifier: workspace:*
+        version: link:../shared
+      linkedom:
+        specifier: ^0.18.9
+        version: 0.18.13
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      vitest:
+        specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@22.20.1)(jiti@2.7.0)
 
   tools/eslint-sift-readonly:

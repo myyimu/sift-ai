@@ -8,6 +8,7 @@ import { resolve } from 'node:path'
 import {
   askModel,
   buildProjectionForScope,
+  extractUnitsForScope,
   getStoreOverview,
   listAnswers,
   parseScope,
@@ -24,6 +25,7 @@ interface CliArgs {
   modelId?: string
   modelCtx?: string
   listAnswers: boolean
+  extractUnits: boolean
 }
 
 function usage(): string {
@@ -36,17 +38,22 @@ function usage(): string {
     '  --model-id <id>        覆盖 SIFT_MODEL_ID',
     '  --model-ctx <n>        覆盖 SIFT_MODEL_CTX（正整数 token 窗口）',
     '  --list-answers         列出已存答案后退出（不调用模型）',
+    '  --extract-units        对 scope 内已捕获快照运行离线 UnitExtractor-v1.1（不调用模型）',
   ].join('\n')
 }
 
 const VALUE_FLAGS = new Set(['--store-root', '--scope', '--question', '--out', '--model-base-url', '--model-id', '--model-ctx'])
 
 function parseArgs(argv: readonly string[]): CliArgs | { error: string } {
-  const args: CliArgs = { scope: '', question: '', listAnswers: false }
+  const args: CliArgs = { scope: '', question: '', listAnswers: false, extractUnits: false }
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i]!
     if (flag === '--list-answers') {
       args.listAnswers = true
+      continue
+    }
+    if (flag === '--extract-units') {
+      args.extractUnits = true
       continue
     }
     if (!VALUE_FLAGS.has(flag)) {
@@ -67,7 +74,7 @@ function parseArgs(argv: readonly string[]): CliArgs | { error: string } {
   }
   if (!args.listAnswers) {
     if (args.scope === '') return { error: `缺少 --scope\n${usage()}` }
-    if (args.question.trim() === '') return { error: '缺少 --question' }
+    if (!args.extractUnits && args.question.trim() === '') return { error: '缺少 --question' }
   }
   return args
 }
@@ -93,12 +100,6 @@ async function main(): Promise<number> {
     ...(parsed.modelId !== undefined ? { SIFT_MODEL_ID: parsed.modelId } : {}),
     ...(parsed.modelCtx !== undefined ? { SIFT_MODEL_CTX: parsed.modelCtx } : {}),
   }
-  const config = loadModelConfig(env)
-  if (config.status !== 'ok') {
-    process.stderr.write(`[qa-cli] 模型配置失败：${config.status}${'missing' in config ? `（缺 ${config.missing.join(', ')}）` : `（${config.reason}）`}\n`)
-    return 3
-  }
-
   const overview = await getStoreOverview(rootDir, env)
   const latest = overview.sessions.length > 0 ? overview.sessions[overview.sessions.length - 1]!.sessionId : undefined
   const scope = parseScope(parsed.scope, latest)
@@ -107,6 +108,30 @@ async function main(): Promise<number> {
     return 2
   }
   process.stderr.write(`[qa-cli] scope=${JSON.stringify(scope)} pages=${overview.pages.length} sessions=${overview.sessions.length}\n`)
+
+  if (parsed.extractUnits) {
+    const extracted = await extractUnitsForScope(rootDir, scope)
+    if (extracted.status === 'scope_not_found') {
+      process.stderr.write(`[qa-cli] ${extracted.message}\n`)
+      return 4
+    }
+    if (extracted.status === 'projection_empty') {
+      process.stderr.write('[qa-cli] extraction_empty：scope 内没有可提取的 Unit\n')
+      return 4
+    }
+    const doc = `${JSON.stringify(extracted, null, 2)}\n`
+    if (parsed.out === '-') process.stdout.write(doc)
+    else if (parsed.out !== undefined) await writeFile(resolve(parsed.out), doc, 'utf8')
+    else process.stdout.write(doc)
+    process.stderr.write(`[qa-cli] UnitExtractor 完成：snapshots=${extracted.snapshots} observations=${extracted.observations.length} canonicalUnits=${extracted.canonicalUnits.length} versions=${extracted.materialization.versions.length}\n`)
+    return 0
+  }
+
+  const config = loadModelConfig(env)
+  if (config.status !== 'ok') {
+    process.stderr.write(`[qa-cli] 模型配置失败：${config.status}${'missing' in config ? `（缺 ${config.missing.join(', ')}）` : `（${config.reason}）`}\n`)
+    return 3
+  }
 
   const built = await buildProjectionForScope(rootDir, scope, parsed.question, config.config.contextWindow)
   if (built.status === 'scope_not_found') {

@@ -82,6 +82,19 @@ button.danger { background: #fff; border-color: #a1301f; color: #a1301f; }
 
 .hint { font-size: 12px; color: #5b6472; margin: 4px 0; }
 .danger-row { display: flex; gap: 8px; }
+.topic-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.topic-status { color: #5b6472; min-height: 1.3em; }
+.topic-list { display: grid; gap: 10px; overflow-x: auto; }
+.topic-cloud { position: relative; min-width: 500px; border: 1px solid #dfe3ea; border-radius: 10px; background: #fbfcff; overflow: hidden; }
+.topic-relations { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.topic-node { position: absolute; z-index: 1; display: flex; align-items: center; justify-content: center; text-align: center; padding: 6px; border: 1px solid #7892cf; border-radius: 999px; background: #eaf0ff; color: #163f98; font-size: 12px; line-height: 1.3; }
+.topic-node:hover, .topic-node:focus { background: #dce7ff; border-color: #2456c4; outline: 2px solid #b8c8ed; outline-offset: 1px; }
+.topic-cloud-note { margin: 0; color: #5b6472; font-size: 11px; }
+.topic-card { border: 1px solid #dfe3ea; border-radius: 10px; padding: 10px 12px; background: #fff; }
+.topic-card h3 { margin: 0 0 4px; }
+.topic-card p { margin: 5px 0; }
+.topic-detail { border-top: 1px solid #dfe3ea; margin-top: 10px; padding-top: 8px; }
+.topic-source { border: 1px solid #e7eaf0; border-radius: 6px; padding: 7px 8px; margin: 6px 0; background: #fff; }
 .delete-report { font-size: 12px; color: #10654a; min-height: 1em; margin: 6px 0 0; }
 .evaluation { border-top: 1px solid #e7eaf0; margin-top: 10px; padding-top: 8px; }
 .evaluation-row { display: flex; gap: 6px; }
