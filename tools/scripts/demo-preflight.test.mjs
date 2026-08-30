@@ -1,11 +1,17 @@
 import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import { resolve } from 'node:path'
+import { parseHostStatus } from './demo-preflight.mjs'
 
 const root = resolve(import.meta.dirname, '../..')
 const script = resolve(root, 'tools/scripts/demo-preflight.mjs')
 
 describe('demo-preflight 安全输出', () => {
+  it('accepts the native host status label emitted by the registration script', () => {
+    expect(parseHostStatus('状态:      已注册\npath 存在: 是')).toEqual({ registered: true, pathExists: true })
+    expect(parseHostStatus('状态:      未注册')).toEqual({ registered: false, pathExists: false })
+  })
+
   it('never prints the model API key', () => {
     const secret = 'demo-preflight-secret-should-never-leak'
     const result = spawnSync(process.execPath, [script], {

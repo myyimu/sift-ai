@@ -3,6 +3,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const root = resolve(import.meta.dirname, '../..')
 const requiredFiles = [
@@ -45,9 +46,15 @@ function checkHostRegistration() {
   const script = join(root, 'tools/scripts/register-sift-native-host.mjs')
   const result = spawnSync(process.execPath, [script, 'status'], { cwd: root, encoding: 'utf8', windowsHide: true })
   const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
+  const status = parseHostStatus(output)
+  return { ok: result.status === 0 && status.registered && status.pathExists, message: status.registered && status.pathExists ? 'Native Host 已注册且路径存在' : 'Native Host 未注册或 manifest/host 路径失效（运行 register）' }
+}
+
+/** 解析注册脚本的稳定语义；兼容历史的中英文 path 标签。 */
+export function parseHostStatus(output) {
   const registered = /状态:\s+已注册/.test(output)
-  const pathExists = /路径存在:\s+是/.test(output)
-  return { ok: result.status === 0 && registered && pathExists, message: registered && pathExists ? 'Native Host 已注册且路径存在' : 'Native Host 未注册或 manifest/host 路径失效（运行 register）' }
+  const pathExists = /(?:路径|path)\s+存在:\s+是/.test(output)
+  return { registered, pathExists }
 }
 
 function checkModelConfig() {
@@ -85,4 +92,4 @@ function main() {
   process.exitCode = failures === 0 ? 0 : 1
 }
 
-main()
+if (fileURLToPath(import.meta.url) === resolve(process.argv[1] ?? '')) main()
