@@ -115,7 +115,7 @@ manifest 的 path 指向 `pack2\win-unpacked\SiftHost.cmd`——重新打包到�
 |---|---|---|
 | 静态 | `pnpm lint` / `pnpm lint:ast` | 全仓 / 观察侧两层规则 |
 | 类型 | `pnpm typecheck` | 全部 workspace 包 |
-| 单元 | `pnpm test` | vitest（当前基线 467 用例；具体数量以当前输出为准）。**必须从仓库根跑**：`pnpm -r test` 会因 eslint-sift-readonly 包的 root 配置找不到测试文件而误报失败 |
+| 单元 | `pnpm test` | vitest（当前基线 468 用例；具体数量以当前输出为准）。**必须从仓库根跑**：`pnpm -r test` 会因 eslint-sift-readonly 包的 root 配置找不到测试文件而误报失败 |
 | 全链路（零 Chrome） | `pnpm vitest run apps/extension/test/e2e` | linkedom 夹具 → capture → transport → 真实 host-loop → 真实 FsStore 的 in-process 闭环（含全量重放去重） |
 | 模拟 Chrome spike | `node tools/spike/run-e03-spike.mjs` | UI 开/关两态各 100 次 connect/disconnect + 帧往返；`--rounds 10` 快速冒烟 |
 | 单链路诊断 | `node tools/spike/manual-roundtrip.mjs [--ui]` | 真实 `.cmd` 链路单次往返；`--ui` 先起 UI 实例 |
