@@ -27,17 +27,23 @@
 
 ## 注册 / 注销 Native Host（ADR-001 E-03）
 
-前置：步骤 3 完成后 `electron-builder --dir` 产出 `apps/desktop/win-unpacked/Sift.exe`。
+前置：`pnpm demo:build` 完成后，产物位于 `apps/desktop/pack2/win-unpacked/`，其中
+`SiftHost.cmd` 是 Chrome Native Messaging 的唯一注册入口（ADR-002）；不要把 manifest
+直接指向 GUI `Sift.exe`。
 
 ```powershell
-# 注册（HKCU，无需管理员；allowed_origins 只含固定 demo Extension ID）
-powershell -File tools\scripts\register-host.ps1 -ExePath <Sift.exe 绝对路径>
+# 查询（只读）
+node tools/scripts/register-sift-native-host.mjs status
 
-# 注销
-powershell -File tools\scripts\unregister-host.ps1
+# 注册（HKCU，无需管理员；会写入当前用户注册表；allowed_origins 只含固定 demo Extension ID）
+node tools/scripts/register-sift-native-host.mjs register
+
+# 注销（删除本脚本生成的注册项与 manifest）
+node tools/scripts/register-sift-native-host.mjs remove
 ```
 
-host manifest 落在 `%LOCALAPPDATA%\Sift\NativeMessagingHosts\com.dj.sift.demo.json`。
+host manifest 落在 `%LOCALAPPDATA%\Sift\native-host\com.dj.sift.demo.json`，`path`
+固定指向打包目录下的 `SiftHost.cmd`。
 
 ## 重新生成 demo key（通常不需要）
 
@@ -51,7 +57,8 @@ host manifest 落在 `%LOCALAPPDATA%\Sift\NativeMessagingHosts\com.dj.sift.demo.
 - `gen-demo-key.mjs` —— 生成 manifest key + Extension ID（一次性，已固化）。
 - `sift-demo-constants.mjs` —— .mjs 侧固定标识常量源。
 - `make-host-manifest.mjs` —— 生成 native host manifest JSON。
-- `register-host.ps1` / `unregister-host.ps1` —— 注册/注销 HKCU host。
+- `register-sift-native-host.mjs` —— 当前 ADR-002 注册/查询/回滚入口；仅操作 HKCU 和本脚本生成的 manifest。
+- `register-host.ps1` / `unregister-host.ps1` —— 历史兼容脚本；不用于当前 `SiftHost.cmd` 架构。
 - `dump-store.mjs` —— SiftStore 只读摘要（journal/page-state/blob 计数；**绝不打印 html 正文**）。用法：`node tools/scripts/dump-store.mjs [storeRoot]`，缺省 `%LOCALAPPDATA%\Sift\store`。回归测试 `dump-store.test.mjs`。
 - `demo-model.env.example` —— OpenAI-compatible 模型环境变量模板（空 Key，占位用；不会自动加载）。
 - `serve-fixtures.mjs` —— 手动演示用静态服务器（仅 127.0.0.1、仅 `fixtures/pages/`；缺省端口 8765）。sanitizeUrl 不放行 `file://`，演示夹具必须走 http。
