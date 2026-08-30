@@ -57,6 +57,7 @@ function cmdStatus() {
     console.log('状态:      未注册')
     return
   }
+  console.log('状态:      已注册')
   console.log(`manifest:  ${registered}`)
   if (!existsSync(registered)) {
     console.log('manifest 文件不存在!')
