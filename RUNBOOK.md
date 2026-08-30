@@ -112,7 +112,7 @@ manifest 的 path 指向 `pack2\win-unpacked\SiftHost.cmd`——重新打包到�
 |---|---|---|
 | 静态 | `pnpm lint` / `pnpm lint:ast` | 全仓 / 观察侧两层规则 |
 | 类型 | `pnpm typecheck` | 全部 workspace 包 |
-| 单元 | `pnpm test` | vitest（426 用例；具体数量以当前输出为准）。**必须从仓库根跑**：`pnpm -r test` 会因 eslint-sift-readonly 包的 root 配置找不到测试文件而误报失败 |
+| 单元 | `pnpm test` | vitest（当前基线 465 用例；具体数量以当前输出为准）。**必须从仓库根跑**：`pnpm -r test` 会因 eslint-sift-readonly 包的 root 配置找不到测试文件而误报失败 |
 | 全链路（零 Chrome） | `pnpm vitest run apps/extension/test/e2e` | linkedom 夹具 → capture → transport → 真实 host-loop → 真实 FsStore 的 in-process 闭环（含全量重放去重） |
 | 模拟 Chrome spike | `node tools/spike/run-e03-spike.mjs` | UI 开/关两态各 100 次 connect/disconnect + 帧往返；`--rounds 10` 快速冒烟 |
 | 单链路诊断 | `node tools/spike/manual-roundtrip.mjs [--ui]` | 真实 `.cmd` 链路单次往返；`--ui` 先起 UI 实例 |
@@ -219,6 +219,31 @@ E2E 用的 mock 端点见 `node tools/e2e/mock-openai.mjs --port 18789`）。
 数据控制（验收门 14 最小实现）：UI 底部"删除本会话数据"（journal 按 session 分区重写 +
 page-state/blob GC）与"删除全部数据"（含 answers 目录，两步确认）。host 持句柄时返回
 真实 `store_busy` 而非伪造成功——建议关闭已授权页面后再删。
+
+### 5.7 主题地图演示：本地预览 → 明确确认 → 主题与来源（P0.5 最小闭环）
+
+前置：§5.2 已捕获至少一个公开页面，UI 与捕获使用同一 store；若要生成真实主题，
+还需按 §1.1 配置 OpenAI-compatible 模型。当前实现是 P0.5 的分阶段落地，不包含桌宠、
+趋势/升温信号或历史主题基线。
+
+1. 启动 UI，在 scope 下拉框选择 `page:<pageInstanceId>`、`session:<sessionId>` 或
+   `latest-session`。主题范围只描述该本地 scope，不会扩大到互联网或其他会话。
+2. 点击 **生成最近 7 天主题** 或 **生成最近 30 天主题**。这一步只做离线 Unit 去重、
+   页面/站点统计和预算计算，不请求模型；确认屏会显示 Units、Pages、Domains、字节数和
+   预计 Token，并明确“确认后才会产生一次远程请求”。
+3. 检查范围后点击 **确认发送到模型**。模型只收到确认屏对应的有界本地证据；成功后主题云
+   显示主题标签、摘要和来源。节点大小只表示去重后的 CanonicalUnit 数，连线只在主题间有
+   共同 Unit 时出现（Jaccard overlap）。
+4. 点击任一主题节点打开 Topic Detail，核对来源卡片、页面标题和安全 URL；来源打开前会
+   再次执行 `sensitive-v1` 校验。主题没有有效 Unit/Evidence 引用时不得展示。
+5. 若 UI 提示“捕获内容已有更新，当前主题图可能过期”，必须重新预览并生成；删除页面、
+   会话或全部数据会使主题缓存失效，不得继续使用旧图冒充当前范围。
+
+主题生成受与问答一致的有界预算约束：最多 200 个去重 Unit、20 个页面、512 KiB 和约
+32k Token。任一上限超出都会要求缩小 scope，不会静默截断或声称覆盖完整范围。当前
+`unit-extractor-v1.1` 使用离线、确定性的 Semantic/Repeated Structure/Main Content
+fallback 路径；不会联网、调用 OCR 或在捕获热路径运行模型。若范围为空、超过预算、模型未
+配置或返回非法引用，UI 会显示明确失败状态，原始捕获不受影响。
 
 ## 6. 常见问题速查
 
