@@ -12,3 +12,4 @@ apps/desktop/*.exe
 coverage/
 .vitest/
 tools/.cache/
+.idea/
