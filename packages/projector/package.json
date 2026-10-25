@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@sift/shared": "workspace:*",
-    "linkedom": "^0.18.9"
+    "linkedom": "^0.18.14"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
